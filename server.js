@@ -1428,6 +1428,8 @@ function serveStatic(req, res, url) {
     return res.end(publicDataJs());
   }
   if (p.endsWith("/")) p += "index.html";
+  // Clean URLs: /admin -> /admin.html, /cart -> /cart.html ...
+  else if (/^\/[a-z]+$/.test(p) && fs.existsSync(path.join(root, p + ".html"))) p += ".html";
   // Admin-uploaded product images are stored on the data volume
   const up = p.match(/^\/assets\/img\/uploads\/([\w.-]+)$/);
   const file = up ? path.join(storeDir, "uploads", up[1]) : path.join(root, p);
