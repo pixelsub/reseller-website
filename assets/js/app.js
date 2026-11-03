@@ -151,6 +151,8 @@ const MyOrders = {
   },
 };
 
+// Customer-facing label: a paid order stuck on a supplier problem reads "Waiting for admin approval"
+const statusText = (o) => (o.waitingAdmin ? "Waiting for admin approval" : STATUS_LABEL[o.status]);
 const STATUS_LABEL = {
   pending: "Waiting for payment check",
   processing: "Payment verified · preparing",
@@ -726,7 +728,7 @@ async function initOrder() {
     $("#my-orders").innerHTML = rows.map((o) => `
       <a class="cart-line my-order" href="order.html?id=${encodeURIComponent(o.id)}&t=${encodeURIComponent(o.token)}">
         <div class="cl-info"><b>${esc(o.id)}</b><span class="muted small">${fmtDate(o.createdAt)} · ${o.items.map((i) => esc(i.name) + " ×" + i.qty).join(", ")}</span></div>
-        <span class="status s-${o.status}">${STATUS_LABEL[o.status]}</span>
+        <span class="status ${o.waitingAdmin ? "s-pending" : "s-" + o.status}">${statusText(o)}</span>
         <strong class="cl-total">${money(o.total)}</strong>
       </a>`).join("") || `<p class="muted" style="padding:20px 0">Could not load your orders.</p>`;
     return;
@@ -744,7 +746,7 @@ async function initOrder() {
           <div class="card order-status">
             <div class="order-id-row">
               ${copyRow("Your order ID", o.id, o.id)}
-              <span class="status s-${o.status}">${STATUS_LABEL[o.status]}</span>
+              <span class="status ${o.waitingAdmin ? "s-pending" : "s-" + o.status}">${statusText(o)}</span>
             </div>
             <p class="muted small">Placed ${fmtDate(o.createdAt)} · Share this order ID with support if you need help.</p>
             ${o.status === "pending" && o.payment.provider === "cryptomus" ? `
@@ -761,7 +763,9 @@ async function initOrder() {
               <button class="btn btn-primary" id="verify-btn">Check payment again</button>` : ""}
             ${o.status === "pending" && !o.payment.auto ? `<p>Thanks! We received your order. The admin will check your payment (${esc(o.payment.method)}, TrxID <b>${esc(o.payment.trx)}</b>) ${esc(SITE.hours)}. Bookmark this page — your account details will appear here.</p>` : ""}
             ${o.status === "delivered" ? `<p>✅ Your order is complete. Your account details are below.</p>` : ""}
-            ${o.status === "processing" ? `<p>${o.payment.method === "Balance" ? "✅ Paid from your balance. " : o.payment.verified ? `✅ Payment confirmed automatically via ${esc(o.payment.method)}. ` : "Your payment is verified. "}Your account is being prepared and will appear here shortly.</p>` : ""}
+            ${o.waitingAdmin ? `<p>✅ Your payment is confirmed.</p>
+              <p><b>⏳ Waiting for admin approval.</b> Your order will be delivered here as soon as it is approved — you don't need to do anything. Keep this page or your order link.</p>` : ""}
+            ${o.status === "processing" && !o.waitingAdmin ? `<p>${o.payment.method === "Balance" ? "✅ Paid from your balance. " : o.payment.verified ? `✅ Payment confirmed automatically via ${esc(o.payment.method)}. ` : "Your payment is verified. "}Your account is being prepared and will appear here shortly.</p>` : ""}
             ${o.status === "cancelled" ? `<p>This order was cancelled. Contact us at <a href="mailto:${SITE.email}">${SITE.email}</a> if you think this is a mistake.</p>` : ""}
           </div>
           ${!o.customer.username && o.status !== "delivered" ? `<div class="card save-link"><p class="small"><b>Ordered as guest:</b> save this link — it's the only way to see your account details.</p>${copyRow("Your order link", location.href, location.href)}</div>` : ""}
@@ -1136,7 +1140,7 @@ async function initAccount() {
   const orderRows = (list) => list.length ? list.map((o) => `
     <a class="cart-line my-order" href="order.html?id=${encodeURIComponent(o.id)}&t=${encodeURIComponent(o.token)}">
       <div class="cl-info"><b>${esc(o.id)}</b><span class="muted small">${fmtDate(o.createdAt)} · ${o.items.map((i) => esc(i.name) + " ×" + i.qty).join(", ")}</span></div>
-      <span class="status s-${o.status}">${STATUS_LABEL[o.status]}</span>
+      <span class="status ${o.waitingAdmin ? "s-pending" : "s-" + o.status}">${statusText(o)}</span>
       <strong class="cl-total">${money(o.total)}</strong>
     </a>`).join("") : `<p class="muted" style="padding:18px 0">No orders yet. <a href="index.html#products">Browse products</a></p>`;
 

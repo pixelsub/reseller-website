@@ -360,9 +360,15 @@ function saveOrders(orders) {
   fs.writeFileSync(tmp, JSON.stringify(orders, null, 2));
   fs.renameSync(tmp, ordersFile);
 }
-const publicOrder = (o) => {
+// What a customer may see of an order: no cost price, no supplier name/ids/errors.
+// waitingAdmin = paid, but delivery is stuck (e.g. supplier problem) until the admin sorts it out.
+const publicOrder = (o, keepToken = false) => {
   const { token, ...rest } = o;
-  return rest;
+  const waitingAdmin = o.status === "processing" && o.items.some((i) => !i.delivered && i.supplierError);
+  return {
+    ...rest, ...(keepToken ? { token } : {}), waitingAdmin,
+    items: o.items.map(({ cost, supplier, supplierError, supplierErrorAt, supplierOrderId, ...i }) => i),
+  };
 };
 
 /* ---------- Stock & automatic delivery ---------- */
@@ -453,11 +459,22 @@ async function supplierDeliver(orderId) {
 }
 
 // After a supplier hiccup: retry all paid orders still waiting on supplier items
-async function retrySupplierOrders() {
-  const ids = loadOrders().filter((o) => o.status === "processing" && o.items.some((i) => i.supplier && !i.delivered)).map((o) => o.id);
+async function retrySupplierOrders({ onlyStale = false } = {}) {
+  const stale = Date.now() - 50_000; // auto mode: skip lines that failed less than 50 s ago
+  const ids = loadOrders().filter((o) => o.status === "processing" &&
+    o.items.some((i) => i.supplier && !i.delivered && (!onlyStale || !i.supplierErrorAt || new Date(i.supplierErrorAt).getTime() < stale))).map((o) => o.id);
   for (const id of ids) await supplierDeliver(id);
   return ids.length;
 }
+// Paid orders stuck on a supplier problem (e.g. empty TokoPremium balance) are retried every minute,
+// so they deliver by themselves as soon as the balance is topped up or stock is back.
+let autoRetryRunning = false;
+if (supKey()) setInterval(async () => {
+  if (autoRetryRunning) return;
+  autoRetryRunning = true;
+  try { await retrySupplierOrders({ onlyStale: true }); } catch (e) { console.error("Supplier auto-retry:", e.message); }
+  autoRetryRunning = false;
+}, 60_000).unref();
 
 // Synchronous: takes accounts from stock and writes them into the order. Caller saves the order.
 function autoDeliver(order) {
@@ -1318,7 +1335,7 @@ async function api(req, res, url) {
   if (route === "GET my/orders") {
     const u = sessionUser(req);
     if (!u) return send(res, 401, { error: "Please log in." });
-    return send(res, 200, loadOrders().filter((o) => o.customer.username === u.username));
+    return send(res, 200, loadOrders().filter((o) => o.customer.username === u.username).map((o) => publicOrder(o, true)));
   }
   if (route === "POST cryptomus/webhook") return cryptomusWebhook(req, res);
   if (route === "GET stock") return send(res, 200, stockCounts());
