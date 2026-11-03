@@ -257,7 +257,7 @@ function productEditor(ctx, cat, stockOf) {
   p.variants.forEach((v) => (v.origKey = orig ? `${orig.slug}|${v.pkg}|${v.duration}` : ""));
   let slugTouched = !!orig;
 
-  const sup = ctx.supplier || { products: [], rate: 18000, defaultMarkup: 30, defaultResellerMarkup: null };
+  const sup = ctx.supplier || { products: [], rate: 17900, defaultMarkup: 30, defaultResellerMarkup: null };
   const supById = Object.fromEntries(sup.products.map((s) => [s.variant_id, s]));
   const idr = (n) => "Rp " + Number(n).toLocaleString("en-US");
 
@@ -475,12 +475,12 @@ async function adminSupplierView(ctx) {
     <form class="card panel sup-settings" id="sup-set">
       <h3>Pricing</h3>
       <div class="sup-set-grid">
-        <label>${S.converted ? "TokoPremium sends IDR — 1 USD = how many IDR" : "Conversion (not used: TokoPremium sends USD)"}<input name="rate" type="number" min="1" step="1" value="${S.rate}" required></label>
+        <label>${S.converted ? "IDR → USD rate" : "Conversion (not used: TokoPremium sends USD)"}<select name="rateMode"><option value="auto" ${S.rateMode === "auto" ? "selected" : ""}>Auto — same as TokoPremium${S.liveRate ? ` (1 USD = ${Number(S.liveRate).toLocaleString("en-US")} IDR)` : ""}</option><option value="manual" ${S.rateMode === "manual" ? "selected" : ""}>Manual</option></select><input name="rate" type="number" min="1" step="1" value="${S.manualRate}" placeholder="1 USD = ? IDR" ${S.rateMode === "auto" ? "hidden" : ""}></label>
         <label>Default markup (1 pc)<span class="inp-suffix"><input name="markup" type="number" min="0" max="1000" step="0.1" value="${S.defaultMarkup}" required>%</span></label>
         <label>Default reseller markup (2+)<span class="inp-suffix"><input name="resellerMarkup" type="number" min="0" max="1000" step="0.1" value="${S.defaultResellerMarkup ?? ""}" placeholder="none">%</span></label>
         <button class="btn btn-primary">Save</button>
       </div>
-      <p class="muted small">All amounts are shown in USD${S.converted ? " (TokoPremium's IDR ÷ rate)" : ""}. Your price = TokoPremium price${S.converted ? " in USD" : ""} × (1 + markup%). It updates by itself when TokoPremium changes its price. Each plan can have its own markup in Products.</p>
+      <p class="muted small">All amounts are shown in USD${S.converted ? ` (IDR ÷ ${S.rateMode === "auto" ? "TokoPremium rate" : "your rate"})` : ""}. Your price = TokoPremium price${S.converted ? " in USD" : ""} × (1 + markup%). It updates by itself when TokoPremium changes its price. Each plan can have its own markup in Products.</p>
     </form>
 
     <div class="card panel">
@@ -509,10 +509,11 @@ async function adminSupplierView(ctx) {
       </div>
     </div>`;
 
+  $("#sup-set", el).rateMode.addEventListener("change", (e) => { $("#sup-set", el).rate.hidden = e.target.value === "auto"; });
   $("#sup-set", el).addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = e.target;
-    const { ok, data } = await jsonPost(api, "/api/admin/supplier/settings", { rate: f.rate.value, markup: f.markup.value, resellerMarkup: f.resellerMarkup.value });
+    const { ok, data } = await jsonPost(api, "/api/admin/supplier/settings", { rateMode: f.rateMode.value, rate: f.rate.value, markup: f.markup.value, resellerMarkup: f.resellerMarkup.value });
     toast(ok ? "Saved — prices updated on the site" : esc(data.error || "Failed"));
     if (ok) reload();
   });

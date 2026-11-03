@@ -242,6 +242,7 @@ function saveCatalog(data) {
 // automatically and the returned accounts are delivered to the customer.
 const SUP_BASE = (process.env.TOKOPREMIUM_API_BASE || "https://api.tokopremium.digital/api/v1").replace(/\/$/, "");
 const supKey = () => process.env.TOKOPREMIUM_API_KEY || "";
+let rateCache = { at: 0, rate: null }; // TokoPremium's own USD rate (declared before the startup refresh below)
 let supCache = { at: 0, byId: {}, list: [], currency: "IDR", error: "", balance: null, mode: "" };
 
 async function supRequest(method, pathname, body, extraHeaders = {}) {
@@ -262,6 +263,7 @@ async function supRequest(method, pathname, body, extraHeaders = {}) {
 
 // Refreshes the supplier catalogue (price + stock). Cached for 55 s unless forced / older than maxAge.
 async function refreshSupplier(maxAge = 55_000) {
+  if (supKey()) await refreshSupplierRate(); // throttled: at most every 10 min
   if (!supKey() || Date.now() - supCache.at < maxAge) return supCache;
   try {
     const json = await supRequest("GET", "/products");
@@ -277,8 +279,26 @@ async function refreshSupplier(maxAge = 55_000) {
 if (supKey()) { refreshSupplier(0); setInterval(() => refreshSupplier(), 60_000).unref(); }
 
 const r4 = (n) => Math.round(n * 10000) / 10000;
-// How many supplier currency units = 1 USD. If TokoPremium sends amounts in USD, no conversion is needed.
-const supRate = (SITE, currency = supCache.currency) => (String(currency || "").toUpperCase() === "USD" ? 1 : Number(SITE.supplierRate) || 18000);
+// How many supplier currency units = 1 USD:
+//   - amounts already in USD -> 1
+//   - rate mode "auto" (default): the USD rate TokoPremium itself uses for the $ prices on its website
+//   - rate mode "manual": SITE.supplierRate typed in the admin panel
+async function refreshSupplierRate() {
+  if (Date.now() - rateCache.at < 10 * 60_000) return;
+  rateCache.at = Date.now() - 9 * 60_000; // on failure retry in ~1 min
+  try {
+    const site = (process.env.TOKOPREMIUM_SITE || "https://tokopremium.digital/").replace(/\/?$/, "/");
+    const html = await (await fetch(site, { signal: AbortSignal.timeout(15_000) })).text();
+    const m = html.match(/rates\\?":\s*\[\s*\{\s*\\?"code\\?":\s*\\?"USD\\?"[^}]*?\\?"perUnit\\?":\s*([\d.]+)/);
+    const rate = m ? Number(m[1]) : 0;
+    if (rate > 1000 && rate < 1_000_000) rateCache = { at: Date.now(), rate };
+  } catch (e) { console.error("Supplier rate refresh:", e.message); }
+}
+const supRate = (SITE, currency = supCache.currency) => {
+  if (String(currency || "").toUpperCase() === "USD") return 1;
+  if (SITE.supplierRateMode !== "manual" && rateCache.rate) return rateCache.rate;
+  return Number(SITE.supplierRate) || rateCache.rate || 17900;
+};
 const ceil2 = (n) => Math.max(0.01, Math.ceil(Math.round(n * 10000) / 100) / 100);
 
 // Live numbers for one linked plan (null if the supplier hasn't been loaded yet)
@@ -1221,7 +1241,8 @@ async function adminSupplier(req, res) {
     balanceUsd: balance === null ? null : r2(balance / supRate(SITE, balanceCurrency)),
     balanceOriginal: balance, balanceCurrency,
     currency: supCache.currency, converted: rate !== 1, error: supCache.error, updatedAt: supCache.at ? new Date(supCache.at).toISOString() : null,
-    rate: Number(SITE.supplierRate) || 18000, defaultMarkup: Number(SITE.supplierMarkup ?? 30), defaultResellerMarkup: SITE.supplierResellerMarkup ?? null,
+    rate, rateMode: SITE.supplierRateMode === "manual" ? "manual" : "auto", liveRate: rateCache.rate, manualRate: Number(SITE.supplierRate) || 17900,
+    defaultMarkup: Number(SITE.supplierMarkup ?? 30), defaultResellerMarkup: SITE.supplierResellerMarkup ?? null,
     products: supCache.list.map((s) => ({ ...s, usd: r4(s.price / rate), normalUsd: r4((s.normal_price || 0) / rate),
       bulkUsd: s.bulk ? r4(s.bulk.price / rate) : null, linkedTo: links[s.variant_id] || [] })),
   });
@@ -1230,12 +1251,13 @@ async function adminSupplier(req, res) {
 async function adminSupplierSettings(req, res) {
   const b = await readBody(req);
   const cat = JSON.parse(JSON.stringify(catalog()));
-  const rate = Number(b.rate), markup = Number(b.markup);
+  const mode = b.rateMode === "manual" ? "manual" : "auto";
+  const rate = b.rate === "" || b.rate === undefined ? Number(cat.SITE.supplierRate) || 17900 : Number(b.rate), markup = Number(b.markup);
   const rm = b.resellerMarkup === "" || b.resellerMarkup === null || b.resellerMarkup === undefined ? null : Number(b.resellerMarkup);
-  if (!(rate >= 1 && rate <= 10_000_000)) return send(res, 400, { error: "Rate: how many IDR = 1 USD (e.g. 18000)." });
+  if (!(rate >= 1 && rate <= 10_000_000)) return send(res, 400, { error: "Rate: how many IDR = 1 USD (e.g. 17900)." });
   if (!(markup >= 0 && markup <= 1000)) return send(res, 400, { error: "Default markup must be between 0 and 1000%." });
   if (rm !== null && !(rm >= 0 && rm <= markup)) return send(res, 400, { error: "Reseller markup must be between 0 and the normal markup." });
-  Object.assign(cat.SITE, { supplierRate: r2(rate), supplierMarkup: r2(markup), supplierResellerMarkup: rm === null ? null : r2(rm) });
+  Object.assign(cat.SITE, { supplierRateMode: mode, supplierRate: r2(rate), supplierMarkup: r2(markup), supplierResellerMarkup: rm === null ? null : r2(rm) });
   saveCatalog(cat);
   send(res, 200, { ok: true });
 }
