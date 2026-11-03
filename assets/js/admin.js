@@ -257,7 +257,7 @@ function productEditor(ctx, cat, stockOf) {
   p.variants.forEach((v) => (v.origKey = orig ? `${orig.slug}|${v.pkg}|${v.duration}` : ""));
   let slugTouched = !!orig;
 
-  const sup = ctx.supplier || { products: [], rate: 16500, defaultMarkup: 30, defaultResellerMarkup: null };
+  const sup = ctx.supplier || { products: [], rate: 18000, defaultMarkup: 30, defaultResellerMarkup: null };
   const supById = Object.fromEntries(sup.products.map((s) => [s.variant_id, s]));
   const idr = (n) => "Rp " + Number(n).toLocaleString("en-US");
 

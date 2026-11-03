@@ -278,7 +278,7 @@ if (supKey()) { refreshSupplier(0); setInterval(() => refreshSupplier(), 60_000)
 
 const r4 = (n) => Math.round(n * 10000) / 10000;
 // How many supplier currency units = 1 USD. If TokoPremium sends amounts in USD, no conversion is needed.
-const supRate = (SITE, currency = supCache.currency) => (String(currency || "").toUpperCase() === "USD" ? 1 : Number(SITE.supplierRate) || 16500);
+const supRate = (SITE, currency = supCache.currency) => (String(currency || "").toUpperCase() === "USD" ? 1 : Number(SITE.supplierRate) || 18000);
 const ceil2 = (n) => Math.max(0.01, Math.ceil(Math.round(n * 10000) / 100) / 100);
 
 // Live numbers for one linked plan (null if the supplier hasn't been loaded yet)
@@ -1221,7 +1221,7 @@ async function adminSupplier(req, res) {
     balanceUsd: balance === null ? null : r2(balance / supRate(SITE, balanceCurrency)),
     balanceOriginal: balance, balanceCurrency,
     currency: supCache.currency, converted: rate !== 1, error: supCache.error, updatedAt: supCache.at ? new Date(supCache.at).toISOString() : null,
-    rate: Number(SITE.supplierRate) || 16500, defaultMarkup: Number(SITE.supplierMarkup ?? 30), defaultResellerMarkup: SITE.supplierResellerMarkup ?? null,
+    rate: Number(SITE.supplierRate) || 18000, defaultMarkup: Number(SITE.supplierMarkup ?? 30), defaultResellerMarkup: SITE.supplierResellerMarkup ?? null,
     products: supCache.list.map((s) => ({ ...s, usd: r4(s.price / rate), normalUsd: r4((s.normal_price || 0) / rate),
       bulkUsd: s.bulk ? r4(s.bulk.price / rate) : null, linkedTo: links[s.variant_id] || [] })),
   });
@@ -1232,7 +1232,7 @@ async function adminSupplierSettings(req, res) {
   const cat = JSON.parse(JSON.stringify(catalog()));
   const rate = Number(b.rate), markup = Number(b.markup);
   const rm = b.resellerMarkup === "" || b.resellerMarkup === null || b.resellerMarkup === undefined ? null : Number(b.resellerMarkup);
-  if (!(rate >= 1 && rate <= 10_000_000)) return send(res, 400, { error: "Rate: how many IDR = 1 USD (e.g. 16500)." });
+  if (!(rate >= 1 && rate <= 10_000_000)) return send(res, 400, { error: "Rate: how many IDR = 1 USD (e.g. 18000)." });
   if (!(markup >= 0 && markup <= 1000)) return send(res, 400, { error: "Default markup must be between 0 and 1000%." });
   if (rm !== null && !(rm >= 0 && rm <= markup)) return send(res, 400, { error: "Reseller markup must be between 0 and the normal markup." });
   Object.assign(cat.SITE, { supplierRate: r2(rate), supplierMarkup: r2(markup), supplierResellerMarkup: rm === null ? null : r2(rm) });
