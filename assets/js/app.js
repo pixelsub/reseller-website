@@ -958,9 +958,9 @@ function initAdmin() {
   const loadUsersView = async (users, pendingTopups) => {
     root.innerHTML = sectionBar(pendingTopups) + (users.length ? `
       <div class="card table-wrap"><table>
-        <thead><tr><th>Reseller</th><th>Joined</th><th>Orders</th><th>Balance</th><th>Adjust balance</th></tr></thead>
+        <thead><tr><th>Reseller</th><th>Email</th><th>Joined</th><th>Orders</th><th>Balance</th><th>Adjust balance</th></tr></thead>
         <tbody>${users.map((u) => `<tr data-u="${esc(u.username)}">
-          <td><b>${esc(u.username)}</b></td><td class="muted">${fmtDate(u.createdAt)}</td><td>${u.orders}</td>
+          <td><b>${esc(u.username)}</b></td><td>${u.email ? `${esc(u.email)}<br>${u.emailVerified ? '<span class="status s-delivered">Verified</span>' : '<span class="status s-pending">Not verified</span>'}` : '<span class="muted small">—</span>'}</td><td class="muted">${fmtDate(u.createdAt)}</td><td>${u.orders}</td>
           <td><b class="amt-plus">${money(u.balance)}</b></td>
           <td><div class="adj"><input type="number" step="1" placeholder="+500 or -200"><input type="text" placeholder="Note"><button class="btn btn-outline" data-adj>Apply</button></div></td>
         </tr>`).join("")}</tbody></table></div>` : `<div class="empty card">No resellers yet.</div>`);
@@ -1298,12 +1298,13 @@ function initLogin() {
           </div>
           <form id="auth-form">
             <label>Username<input name="username" required minlength="3" maxlength="30" pattern="[A-Za-z0-9_.]{3,30}" autocomplete="username" placeholder="e.g. rahim_store"></label>
+            ${mode === "join" ? `<label>Email<input name="email" type="email" required maxlength="120" autocomplete="email" placeholder="you@gmail.com"></label>` : ""}
             <label>Password<input name="password" type="password" required minlength="6" autocomplete="${mode === "join" ? "new-password" : "current-password"}" placeholder="${mode === "join" ? "At least 6 characters" : ""}"></label>
             ${mode === "join" ? `<label>Confirm password<input name="password2" type="password" required minlength="6" autocomplete="new-password"></label>` : ""}
             <div class="form-error" id="auth-error" hidden></div>
             <button class="btn btn-primary btn-block" id="auth-btn">${mode === "join" ? "Create reseller account" : "Login"}</button>
           </form>
-          <p class="muted small">${mode === "join" ? "Free and instant — no email or phone needed." : `No account? <a href="#" data-m="join">Join as reseller</a> — it's free.`}</p>
+          <p class="muted small">${mode === "join" ? "Free. We'll email you a 6-digit code to confirm your address." : `No account? <a href="#" data-m="join">Join as reseller</a> — it's free.`}</p>
         </div>
         <div class="auth-side">
           <span class="eyebrow">Why join?</span>
@@ -1326,12 +1327,52 @@ function initLogin() {
       const r = await fetch(`/api/auth/${mode === "join" ? "signup" : "login"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: f.get("username"), password: f.get("password") }),
+        body: JSON.stringify({ username: f.get("username"), email: f.get("email"), password: f.get("password") }),
       });
       const d = await r.json().catch(() => ({}));
+      if (d.needsVerify) return renderVerify(d.username, d.email, r.ok); // new sign-up, or login before verifying
       if (r.ok) return location.replace(next);
       err.textContent = d.error || "Something went wrong."; err.hidden = false; btn.disabled = false;
     });
+  };
+
+  // Step 2: type the 6-digit code that was emailed
+  const renderVerify = (username, maskedEmail, fresh) => {
+    root.innerHTML = `
+      <div class="auth-grid">
+        <div class="card auth-card">
+          <h3>Check your email</h3>
+          <p>${fresh ? "We sent" : "Your email isn't verified yet. We sent"} a 6-digit code to <b>${esc(maskedEmail)}</b>. It expires in 15 minutes.</p>
+          <form id="verify-form">
+            <label>Verification code<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required placeholder="123456" class="code-input" autofocus></label>
+            <div class="form-error" id="auth-error" hidden></div>
+            <button class="btn btn-primary btn-block" id="auth-btn">Verify & continue</button>
+          </form>
+          <p class="muted small">Didn't get it? Check spam, or <a href="#" id="resend">send a new code</a>. <a href="#" id="back">Use another email</a></p>
+        </div>
+        <div class="auth-side">
+          <span class="eyebrow">Almost there</span>
+          <h2>Confirm your email</h2>
+          <p class="muted">This keeps reseller accounts real and lets you recover your account later.</p>
+        </div>
+      </div>`;
+    const err = $("#auth-error"), show = (m) => { err.textContent = m; err.hidden = false; };
+    $("#verify-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      err.hidden = true;
+      const btn = $("#auth-btn"); btn.disabled = true;
+      const r = await fetch("/api/auth/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, code: e.target.code.value }) });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) return location.replace(next);
+      show(d.error || "Could not verify."); btn.disabled = false;
+    });
+    $("#resend").addEventListener("click", async (e) => {
+      e.preventDefault();
+      const r = await fetch("/api/auth/resend", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username }) });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) { err.hidden = true; toast("New code sent"); } else show(d.error || "Could not send a new code.");
+    });
+    $("#back").addEventListener("click", (e) => { e.preventDefault(); mode = "join"; render(); });
   };
   render();
 }

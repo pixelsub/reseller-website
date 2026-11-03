@@ -74,8 +74,14 @@ Every change is live on the site immediately.
 
 ## Guests vs resellers
 - **Guest** (not logged in): can order without any account and without giving name/phone/email. Always pays the **1 pc price**, whatever the quantity. Their order page link is their only way back, so the page shows a "copy your order link" box.
-- **Reseller**: signs up at `login.html` with just a username + password — becomes a reseller instantly. When logged in, plans with `bulkPrice` cost the **2+ price** per piece from 2 pieces. Orders are saved to the account ("My Orders").
+- **Reseller**: signs up at `login.html` with username, **email** and password, then types the **6-digit code emailed to them** — only then the account is active (codes expire in 15 min, 5 tries, resend every 60 s, max 5 per hour; the same Gmail with dots/+tags counts once; sign-ups not verified within 24 h are removed). Codes are stored hashed. Accounts created before this feature (no email) keep working. When logged in, plans with `bulkPrice` cost the **2+ price** per piece from 2 pieces. Orders are saved to the account ("My Orders").
 - Accounts are stored in `storage/users.json` (passwords hashed with scrypt); logins use an HttpOnly cookie for 30 days. 10 wrong logins per IP lock that IP for 15 minutes.
+
+## Email verification setup
+Railway blocks SMTP, so emails go through an HTTP email API. Set in Variables **one** of:
+- `RESEND_API_KEY` (resend.com) or `BREVO_API_KEY` (brevo.com), and
+- `EMAIL_FROM`, e.g. `PixelSub <noreply@pixelsub.shop>` (the address/domain must be verified in Resend/Brevo).
+Without a provider, sign-up is refused on Railway ("email service not set up"); locally the code is printed in the server log for testing.
 
 ## Reseller profile & balance (`account.html`)
 - **Overview** — balance, total orders, total spent, money saved with reseller prices, recent orders.

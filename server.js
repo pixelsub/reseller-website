@@ -6,6 +6,7 @@
 //   BYBIT_API_KEY, BYBIT_API_SECRET      -> read-only Bybit API key used to auto-verify Bybit UID transfers
 //   CRYPTOMUS_MERCHANT_ID, CRYPTOMUS_API_KEY -> Cryptomus payment API key (invoices + webhooks)
 //   TOKOPREMIUM_API_KEY                  -> TokoPremium reseller API key (live price/stock + automatic supplier orders)
+//   RESEND_API_KEY or BREVO_API_KEY + EMAIL_FROM -> sends the 6-digit email verification code to new resellers
 //   PUBLIC_URL                           -> e.g. https://pixelsub.shop (used for Cryptomus return/webhook links)
 const http = require("http");
 const fs = require("fs");
@@ -627,7 +628,8 @@ function sessionUser(req) {
   const s = readJson(sessionsFile, {})[sha256(t)];
   if (!s || s.exp < Date.now()) return null;
   const u = readJson(usersFile, []).find((x) => x.username === s.username);
-  return u && !u.disabled ? u : null;
+  // Accounts with an email must have verified it (older accounts without an email still work)
+  return u && !u.disabled && (!u.email || u.emailVerified) ? u : null;
 }
 function startSession(req, res, username) {
   const token = crypto.randomBytes(32).toString("hex");
@@ -638,7 +640,8 @@ function startSession(req, res, username) {
   const secure = req.headers["x-forwarded-proto"] === "https" || req.socket.encrypted ? "; Secure" : "";
   res.setHeader("Set-Cookie", `ps_session=${token}; HttpOnly; Path=/; Max-Age=${SESSION_DAYS * 86400}; SameSite=Lax${secure}`);
 }
-const publicUser = (u) => ({ username: u.username, reseller: true, balance: u.balance || 0, createdAt: u.createdAt });
+const maskEmail = (e) => { const [l, d] = String(e || "").split("@"); return l ? `${l.slice(0, 2)}${"*".repeat(Math.max(1, Math.min(l.length - 2, 6)))}@${d}` : ""; };
+const publicUser = (u) => ({ username: u.username, reseller: true, balance: u.balance || 0, createdAt: u.createdAt, email: u.email ? maskEmail(u.email) : null, emailVerified: !!u.emailVerified });
 
 // Simple brute-force protection: 10 failed logins per IP per 15 minutes
 const attempts = new Map();
@@ -653,31 +656,160 @@ function failedAttempt(req) {
   else a.count++;
 }
 
+/* ---------- Email (verification codes) ---------- */
+// Sent through an HTTP email API (Railway blocks SMTP on most plans). Set ONE of:
+//   RESEND_API_KEY  (resend.com)   or   BREVO_API_KEY  (brevo.com)
+// plus EMAIL_FROM, e.g.  PixelSub <noreply@pixelsub.shop>
+const emailProvider = () => (process.env.RESEND_API_KEY ? "resend" : process.env.BREVO_API_KEY ? "brevo" : "");
+const onRailway = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+// Without a provider the code is only printed to the server log, and only when not on Railway (local testing)
+const emailDevMode = () => !emailProvider() && !onRailway && process.env.EMAIL_DEBUG !== "0";
+const emailReady = () => !!emailProvider() && !!process.env.EMAIL_FROM || emailDevMode();
+
+async function sendEmail({ to, subject, html, text }) {
+  const provider = emailProvider();
+  if (!provider) {
+    if (emailDevMode()) { console.log(`[DEV EMAIL] to ${to} | ${subject}\n${text}`); return; }
+    throw new Error("Email is not set up on the server.");
+  }
+  const from = process.env.EMAIL_FROM || "";
+  const m = from.match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
+  const fromName = m ? m[1].replace(/^"|"$/g, "") : "", fromAddr = m ? m[2] : from.trim();
+  if (!fromAddr) throw new Error("EMAIL_FROM is not set on the server.");
+  let r;
+  if (provider === "resend") {
+    r = await fetch((process.env.RESEND_API_BASE || "https://api.resend.com") + "/emails", {
+      method: "POST", headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from, to: [to], subject, html, text }), signal: AbortSignal.timeout(15_000),
+    });
+  } else {
+    r = await fetch((process.env.BREVO_API_BASE || "https://api.brevo.com") + "/v3/smtp/email", {
+      method: "POST", headers: { "api-key": process.env.BREVO_API_KEY, "Content-Type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ sender: { name: fromName || undefined, email: fromAddr }, to: [{ email: to }], subject, htmlContent: html, textContent: text }), signal: AbortSignal.timeout(15_000),
+    });
+  }
+  if (!r.ok) {
+    const j = await r.json().catch(() => ({}));
+    throw new Error(`Email service error (${provider} ${r.status}): ${j.message || j.error || ""}`);
+  }
+}
+
+// Same inbox written differently counts once: Gmail ignores dots and +tags
+function emailKey(e) {
+  let [l, d] = String(e).toLowerCase().trim().split("@");
+  if (d === "googlemail.com") d = "gmail.com";
+  if (d === "gmail.com") l = l.split("+")[0].replace(/\./g, "");
+  return `${l}@${d}`;
+}
+const validEmail = (e) => e.length <= 120 && /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[a-z]{2,}$/i.test(e);
+
+// Creates a fresh 6-digit code for a pending user and emails it. Throws an Error with .status for the caller.
+async function sendVerificationCode(u, users) {
+  const v = u.verify || {};
+  const now = Date.now();
+  if (v.sentAt && now - v.sentAt < 60_000) { const e = new Error(`Please wait ${Math.ceil((60_000 - (now - v.sentAt)) / 1000)} s before asking for a new code.`); e.status = 429; throw e; }
+  const hourStart = v.hourStart && now - v.hourStart < 3600_000 ? v.hourStart : now;
+  const count = hourStart === v.hourStart ? (v.count || 0) : 0;
+  if (count >= 5) { const e = new Error("Too many codes requested. Try again in an hour."); e.status = 429; throw e; }
+  const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
+  const salt = crypto.randomBytes(8).toString("hex");
+  const { SITE } = catalog();
+  await sendEmail({
+    to: u.email,
+    subject: `${code} is your ${SITE.name} verification code`,
+    text: `Your ${SITE.name} verification code is ${code}. It expires in 15 minutes. If you didn't sign up, ignore this email.`,
+    html: `<div style="font-family:Arial,sans-serif;max-width:420px;margin:auto;padding:24px;border:1px solid #e2e8f0;border-radius:12px">
+      <h2 style="margin:0 0 8px">${SITE.name}</h2><p style="color:#475569">Your verification code:</p>
+      <p style="font-size:34px;font-weight:700;letter-spacing:8px;margin:12px 0;color:#0f172a">${code}</p>
+      <p style="color:#64748b;font-size:13px">It expires in 15 minutes. If you didn't sign up, you can ignore this email.</p></div>`,
+  });
+  u.verify = { hash: sha256(code + salt), salt, exp: now + 15 * 60_000, tries: 0, sentAt: now, hourStart, count: count + 1 };
+  writeJson(usersFile, users);
+}
+
+const signupHits = new Map(); // ip -> { n, at }: at most 10 sign-ups (emails sent) per IP per hour
+function signupLimited(req) {
+  const ip = ipOf(req), h = signupHits.get(ip);
+  if (!h || Date.now() - h.at > 3600_000) { signupHits.set(ip, { n: 1, at: Date.now() }); return false; }
+  return ++h.n > 10;
+}
+
 async function signup(req, res) {
   const body = await readBody(req);
   const username = str(body.username, 30).toLowerCase();
+  const email = str(body.email, 120).toLowerCase();
   const password = typeof body.password === "string" ? body.password : "";
   if (!/^[a-z0-9_.]{3,30}$/.test(username)) return send(res, 400, { error: "Username: 3–30 letters, numbers, _ or ." });
+  if (!validEmail(email)) return send(res, 400, { error: "Enter a valid email address." });
   if (password.length < 6 || password.length > 200) return send(res, 400, { error: "Password must be at least 6 characters." });
-  if (tooManyAttempts(req)) return send(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
-  const users = readJson(usersFile, []);
+  if (tooManyAttempts(req) || signupLimited(req)) return send(res, 429, { error: "Too many attempts. Try again later." });
+  if (!emailReady()) return send(res, 503, { error: "Sign-up is temporarily unavailable (email service not set up). Please contact support." });
+
+  let users = readJson(usersFile, []);
+  // Free usernames/emails held by sign-ups that never verified within 24 h
+  users = users.filter((u) => !(u.email && !u.emailVerified && Date.now() - new Date(u.createdAt).getTime() > 24 * 3600_000));
+  const key = emailKey(email);
   if (users.some((u) => u.username === username)) return send(res, 400, { error: "This username is taken." });
-  const u = { username, ...hashPassword(password), createdAt: new Date().toISOString() };
+  if (users.some((u) => u.emailKey === key)) return send(res, 400, { error: "This email is already registered. Try logging in." });
+  const u = { username, email, emailKey: key, emailVerified: false, ...hashPassword(password), createdAt: new Date().toISOString() };
   users.push(u);
+  try { await sendVerificationCode(u, users); }
+  catch (e) {
+    console.error("Verification email:", e.message);
+    return send(res, e.status || 502, { error: e.status ? e.message : "Could not send the verification email. Check the address and try again." });
+  }
+  console.log(`New reseller (unverified): ${username}`);
+  send(res, 201, { needsVerify: true, username, email: maskEmail(email) });
+}
+
+async function verifyEmail(req, res) {
+  const body = await readBody(req);
+  const username = str(body.username, 30).toLowerCase();
+  const code = str(body.code, 10).replace(/\s/g, "");
+  const users = readJson(usersFile, []);
+  const u = users.find((x) => x.username === username);
+  if (!u || !u.email || u.emailVerified || !u.verify) return send(res, 400, { error: "No pending verification. Please sign up or log in again." });
+  if (tooManyAttempts(req)) return send(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
+  if (Date.now() > u.verify.exp) return send(res, 400, { error: "This code has expired. Request a new one." });
+  if (u.verify.tries >= 5) return send(res, 429, { error: "Too many wrong codes. Request a new one." });
+  const a = Buffer.from(sha256(code + u.verify.salt)), b = Buffer.from(u.verify.hash);
+  if (!/^\d{6}$/.test(code) || !crypto.timingSafeEqual(a, b)) {
+    u.verify.tries++; writeJson(usersFile, users); failedAttempt(req);
+    return send(res, 400, { error: `Wrong code. ${Math.max(0, 5 - u.verify.tries)} attempt(s) left.` });
+  }
+  u.emailVerified = true; u.verifiedAt = new Date().toISOString(); delete u.verify;
   writeJson(usersFile, users);
   startSession(req, res, username);
-  console.log(`New reseller: ${username}`);
-  send(res, 201, publicUser(u));
+  console.log(`Reseller verified: ${username}`);
+  send(res, 200, publicUser(u));
+}
+
+async function resendCode(req, res) {
+  const body = await readBody(req);
+  const username = str(body.username, 30).toLowerCase();
+  const users = readJson(usersFile, []);
+  const u = users.find((x) => x.username === username);
+  if (!u || !u.email || u.emailVerified) return send(res, 200, { ok: true }); // don't reveal which accounts exist
+  if (signupLimited(req)) return send(res, 429, { error: "Too many attempts. Try again later." });
+  try { await sendVerificationCode(u, users); }
+  catch (e) { return send(res, e.status || 502, { error: e.status ? e.message : "Could not send the email. Try again later." }); }
+  send(res, 200, { ok: true, email: maskEmail(u.email) });
 }
 
 async function login(req, res) {
   const body = await readBody(req);
   if (tooManyAttempts(req)) return send(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
   const username = str(body.username, 30).toLowerCase();
-  const u = readJson(usersFile, []).find((x) => x.username === username);
+  const users = readJson(usersFile, []);
+  const u = users.find((x) => x.username === username);
   if (!u || u.disabled || !checkPassword(String(body.password || ""), u)) {
     failedAttempt(req);
     return send(res, 401, { error: "Wrong username or password." });
+  }
+  if (u.email && !u.emailVerified) {
+    // Right password but email not verified yet: send a fresh code (if allowed) and ask for it
+    try { await sendVerificationCode(u, users); } catch { /* cooldown or provider issue: they can press "resend" */ }
+    return send(res, 403, { needsVerify: true, username, email: maskEmail(u.email), error: "Please verify your email first." });
   }
   startSession(req, res, username);
   send(res, 200, publicUser(u));
@@ -1331,6 +1463,8 @@ async function api(req, res, url) {
   const route = req.method + " " + parts.slice(1).join("/");
   if (route === "POST auth/signup") return signup(req, res);
   if (route === "POST auth/login") return login(req, res);
+  if (route === "POST auth/verify") return verifyEmail(req, res);
+  if (route === "POST auth/resend") return resendCode(req, res);
   if (route === "POST auth/logout") return logout(req, res);
   if (route === "GET auth/me") {
     const u = sessionUser(req);
@@ -1355,7 +1489,7 @@ async function api(req, res, url) {
     if (req.method === "GET" && parts[2] === "orders" && parts.length === 3) return send(res, 200, loadOrders());
     if (req.method === "GET" && parts[2] === "users" && parts.length === 3) {
       const orders = loadOrders();
-      return send(res, 200, readJson(usersFile, []).map((u) => ({ ...publicUser(u), orders: orders.filter((o) => o.customer.username === u.username).length })));
+      return send(res, 200, readJson(usersFile, []).map((u) => ({ ...publicUser(u), email: u.email || null, orders: orders.filter((o) => o.customer.username === u.username).length })));
     }
     if (req.method === "POST" && parts[2] === "orders" && parts[4] === "verify" && parts.length === 5) {
       const o = loadOrders().find((x) => x.id === parts[3]);

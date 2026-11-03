@@ -466,6 +466,8 @@ select:focus, .checkout input:focus, .reseller-form input:focus { border-color: 
 .auth-card input { padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 14.5px; outline: none; }
 .auth-card input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-100); }
 .auth-card a, .auth-side a { color: var(--primary); font-weight: 600; }
+.auth-card .code-input { font-size: 26px; letter-spacing: 10px; text-align: center; font-weight: 700; }
+.auth-card h3 { font-size: 20px; }
 .auth-side h2 { font-size: 30px; margin: 8px 0 16px; }
 .auth-perks { list-style: none; padding: 0; display: grid; gap: 12px; margin-bottom: 18px; }
 .auth-perks li { display: flex; gap: 10px; align-items: flex-start; }
