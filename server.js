@@ -16,7 +16,8 @@ const crypto = require("crypto");
 const root = __dirname;
 const port = process.env.PORT || 5173;
 const ADMIN_KEY = process.env.ADMIN_KEY || "change-me";
-const storeDir = path.join(root, "storage");
+// All shop data (orders, accounts, stock, catalogue, uploads) lives here. On Railway set DATA_DIR to the Volume mount path.
+const storeDir = path.resolve(process.env.DATA_DIR || path.join(root, "storage"));
 const ordersFile = path.join(storeDir, "orders.json");
 const types = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp", ".ico": "image/x-icon" };
 const STATUSES = ["pending", "processing", "delivered", "cancelled"];
@@ -206,7 +207,7 @@ async function tryVerify(order) {
 // Until the first edit, assets/js/data.js is used as the starting catalogue.
 // The browser always loads /assets/js/data.js, which the server generates from the catalogue
 // with private fields (cost prices) removed.
-const catalogFile = path.join(root, "storage", "catalog.json");
+const catalogFile = path.join(storeDir, "catalog.json");
 let catCache = { mtime: -1, data: null };
 
 function seedCatalog() {
@@ -1119,7 +1120,7 @@ async function adminUpload(req, res) {
     : sig.toString("ascii", 0, 4) === "RIFF" && sig.toString("ascii", 8, 12) === "WEBP" ? "webp"
     : sig.toString("ascii", 0, 3) === "GIF" ? "gif" : null;
   if (!ext) return send(res, 400, { error: "Only PNG, JPG, WEBP or GIF images." });
-  const dir = path.join(root, "assets", "img", "uploads");
+  const dir = path.join(storeDir, "uploads"); // on the data volume, so uploads survive redeploys
   fs.mkdirSync(dir, { recursive: true });
   const name = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString("hex")}.${ext}`;
   fs.writeFileSync(path.join(dir, name), buf);
@@ -1427,8 +1428,10 @@ function serveStatic(req, res, url) {
     return res.end(publicDataJs());
   }
   if (p.endsWith("/")) p += "index.html";
-  const file = path.join(root, p);
-  if (!file.startsWith(root + path.sep)) { res.writeHead(403); return res.end(); }
+  // Admin-uploaded product images are stored on the data volume
+  const up = p.match(/^\/assets\/img\/uploads\/([\w.-]+)$/);
+  const file = up ? path.join(storeDir, "uploads", up[1]) : path.join(root, p);
+  if (!up && !file.startsWith(root + path.sep)) { res.writeHead(403); return res.end(); }
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404); return res.end("Not found"); }
     res.writeHead(200, { "Content-Type": types[path.extname(file).toLowerCase()] || "application/octet-stream" });
