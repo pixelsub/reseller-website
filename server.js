@@ -17,7 +17,11 @@ const root = __dirname;
 const port = process.env.PORT || 5173;
 const ADMIN_KEY = process.env.ADMIN_KEY || "change-me";
 // All shop data (orders, accounts, stock, catalogue, uploads) lives here. On Railway set DATA_DIR to the Volume mount path.
-const storeDir = path.resolve(process.env.DATA_DIR || path.join(root, "storage"));
+// DATA_DIR wins; otherwise a Railway Volume (Railway sets RAILWAY_VOLUME_MOUNT_PATH by itself); otherwise ./storage
+const defaultStoreDir = path.join(root, "storage");
+const storeDir = path.resolve(process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || defaultStoreDir);
+// On Railway without a volume the disk is wiped on every deploy
+const dataAtRisk = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID) && storeDir === path.resolve(defaultStoreDir);
 const ordersFile = path.join(storeDir, "orders.json");
 const types = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp", ".ico": "image/x-icon" };
 const STATUSES = ["pending", "processing", "delivered", "cancelled"];
@@ -1365,6 +1369,7 @@ async function api(req, res, url) {
 
     if (route === "GET admin/topups") return send(res, 200, loadTopups());
 
+    if (route === "GET admin/health") return send(res, 200, { dataDir: storeDir, dataAtRisk });
     if (route === "GET admin/catalog") { await refreshSupplier(30_000); return send(res, 200, liveCatalog()); }
     if (route === "GET admin/supplier") return adminSupplier(req, res);
     if (route === "POST admin/supplier/settings") return adminSupplierSettings(req, res);
@@ -1490,5 +1495,7 @@ http.createServer(async (req, res) => {
   }
 }).listen(port, () => {
   console.log(`PixelSub running at http://localhost:${port}`);
+  console.log(`Data folder: ${storeDir}`);
+  if (dataAtRisk) console.error("WARNING: running on Railway WITHOUT a Volume - all orders, stock and product edits are lost on every deploy. Add a Volume and set DATA_DIR to its mount path.");
   if (ADMIN_KEY === "change-me") console.log('Admin key is the default "change-me" - set ADMIN_KEY before going live.');
 });

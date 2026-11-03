@@ -100,8 +100,10 @@ async function adminDashboard({ el, api, reload }) {
     for (let t = new Date(from + "T12:00:00"); isoDay(t) <= to; t.setDate(t.getDate() + 1)) filled.push(map[isoDay(t)] || { date: isoDay(t), revenue: 0, profit: 0, orders: 0 });
   } else filled.push(...A.byDay);
 
+  const health = await api("/api/admin/health").then((r) => r.json()).catch(() => ({}));
   const tile = (label, value, sub = "", cls = "") => `<div class="card kpi ${cls}"><span>${label}</span><strong>${value}</strong>${sub ? `<small>${sub}</small>` : ""}</div>`;
   el.innerHTML = `
+    ${health.dataAtRisk ? `<div class="form-error"><b>⚠ Your data is NOT saved permanently.</b> This server has no Volume, so every deploy erases orders, stock, accounts and product edits. In Railway: add a Volume (mount path <code>/data</code>) and set the variable <code>DATA_DIR=/data</code>.</div>` : ""}
     <div class="filter-row">
       ${[["today", "Today"], ["7d", "7 days"], ["30d", "30 days"], ["month", "This month"], ["all", "All time"]].map(([k, l]) => `<button class="tab ${dashRange.key === k ? "active" : ""}" data-range="${k}">${l}</button>`).join("")}
       <span class="custom-range"><input type="date" id="r-from" value="${from}"> – <input type="date" id="r-to" value="${to}"><button class="btn btn-outline" id="r-apply">Apply</button></span>
