@@ -4,7 +4,7 @@
 //   PORT (default 5173), ADMIN_KEY (admin panel password, default "change-me")
 //   BINANCE_API_KEY, BINANCE_API_SECRET  -> read-only Binance API key used to auto-verify Binance Pay payments
 //   BYBIT_API_KEY, BYBIT_API_SECRET      -> read-only Bybit API key used to auto-verify Bybit UID transfers
-//   CRYPTOMUS_MERCHANT_ID, CRYPTOMUS_API_KEY -> Cryptomus payment API key (invoices + webhooks)
+//   CRYPTOMUS_MERCHANT_ID, CRYPTOMUS_PAYMENT_API_KEY (or CRYPTOMUS_API_KEY) -> Cryptomus payment API key (invoices + webhooks)
 //   TOKOPREMIUM_API_KEY                  -> TokoPremium reseller API key (live price/stock + automatic supplier orders)
 //   PUBLIC_URL                           -> e.g. https://pixelsub.shop (used for Cryptomus return/webhook links)
 const http = require("http");
@@ -99,10 +99,12 @@ async function bybitDeposits() {
 // Customer is redirected to a Cryptomus invoice and can pay with any crypto.
 // Cryptomus calls /api/cryptomus/webhook when the status changes; we also double-check with /v1/payment/info.
 const CM_BASE = process.env.CRYPTOMUS_API_BASE || "https://api.cryptomus.com";
-const cmSign = (bodyStr) => crypto.createHash("md5").update(Buffer.from(bodyStr).toString("base64") + (process.env.CRYPTOMUS_API_KEY || "")).digest("hex");
+// Payment API key (Cryptomus calls it the "Payment" key; the Payout key is not used here)
+const cmKey = () => process.env.CRYPTOMUS_PAYMENT_API_KEY || process.env.CRYPTOMUS_API_KEY || "";
+const cmSign = (bodyStr) => crypto.createHash("md5").update(Buffer.from(bodyStr).toString("base64") + cmKey()).digest("hex");
 
 async function cryptomus(pathname, data) {
-  if (!process.env.CRYPTOMUS_MERCHANT_ID || !process.env.CRYPTOMUS_API_KEY) throw new Error("Cryptomus is not configured on the server.");
+  if (!process.env.CRYPTOMUS_MERCHANT_ID || !cmKey()) throw new Error("Cryptomus is not configured on the server.");
   const body = JSON.stringify(data);
   const r = await fetch(CM_BASE + pathname, {
     method: "POST",
@@ -136,7 +138,7 @@ async function createInvoice(entity, req, returnPath) {
 // Webhook signature: md5(base64(JSON without "sign", slashes escaped like PHP) + API key)
 function cryptomusWebhookValid(data) {
   const { sign, ...rest } = data;
-  if (!sign || !process.env.CRYPTOMUS_API_KEY) return false;
+  if (!sign || !cmKey()) return false;
   const expected = cmSign(JSON.stringify(rest).replace(/\//g, "\\/"));
   const a = Buffer.from(String(sign)), b = Buffer.from(expected);
   return a.length === b.length && crypto.timingSafeEqual(a, b);

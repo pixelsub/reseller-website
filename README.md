@@ -15,7 +15,7 @@ Then open http://localhost:5173
 - `PUBLIC_URL` — your live address, e.g. `https://pixelsub.shop` (Cryptomus sends customers back here and calls `/api/cryptomus/webhook`).
 - `BINANCE_API_KEY` / `BINANCE_API_SECRET` — Binance key with **"Enable Reading" only** (no trading/withdrawal), IP-restricted.
 - `BYBIT_API_KEY` / `BYBIT_API_SECRET` — Bybit **read-only** key (wallet history), IP-restricted.
-- `CRYPTOMUS_MERCHANT_ID` / `CRYPTOMUS_API_KEY` — Cryptomus merchant ID and Payment API key.
+- `CRYPTOMUS_MERCHANT_ID` / `CRYPTOMUS_PAYMENT_API_KEY` (or `CRYPTOMUS_API_KEY`) — Cryptomus merchant ID and Payment API key.
 - `PORT` — default 5173
 
 ## Currency & payments
