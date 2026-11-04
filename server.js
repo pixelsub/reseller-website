@@ -120,7 +120,7 @@ async function cryptomus(pathname, data) {
 const publicBase = (req) => (process.env.PUBLIC_URL || `${req.headers["x-forwarded-proto"] || "http"}://${req.headers.host}`).replace(/\/$/, "");
 
 // Creates the invoice and stores its link on the order/top-up payment
-async function createInvoice(entity, req, returnPath) {
+async function createInvoice(entity, req, returnPath, lifetimeSec = 7200) {
   const base = publicBase(req);
   const res = await cryptomus("/v1/payment", {
     amount: Number(entity.payment.amountUsdt).toFixed(2),
@@ -129,7 +129,7 @@ async function createInvoice(entity, req, returnPath) {
     url_callback: `${base}/api/cryptomus/webhook`,
     url_return: base + returnPath,
     url_success: base + returnPath,
-    lifetime: 7200,
+    lifetime: lifetimeSec,
   });
   entity.payment.invoice = { uuid: res.uuid, url: res.url };
   entity.payment.payUrl = res.url;
@@ -159,7 +159,10 @@ async function verifyPayment(e) {
   if (p.provider === "cryptomus") {
     const info = await cryptomus("/v1/payment/info", { order_id: e.id });
     const status = info.payment_status || info.status;
+    // Paid but still confirming on the blockchain: don't let the order expire meanwhile
+    p.inProgress = ["confirm_check", "process", "check"].includes(status);
     if (!["paid", "paid_over"].includes(status)) {
+      if (p.inProgress) return { ok: false, note: "Payment received — waiting for blockchain confirmation." };
       return { ok: false, note: ["cancel", "fail", "system_fail", "refund_paid"].includes(status)
         ? "The Cryptomus payment failed or expired. Please place a new one."
         : "Waiting for your payment on Cryptomus." };
@@ -384,8 +387,9 @@ function saveOrders(orders) {
 const publicOrder = (o, keepToken = false) => {
   const { token, ...rest } = o;
   const waitingAdmin = o.status === "processing" && o.items.some((i) => !i.delivered && i.supplierError);
+  const expiresAt = o.status === "pending" && !o.payment.verified ? new Date(Date.parse(o.createdAt) + ORDER_TTL).toISOString() : null;
   return {
-    ...rest, ...(keepToken ? { token } : {}), waitingAdmin,
+    ...rest, ...(keepToken ? { token } : {}), waitingAdmin, expiresAt,
     items: o.items.map(({ cost, supplier, supplierError, supplierErrorAt, supplierOrderId, ...i }) => i),
   };
 };
@@ -784,7 +788,7 @@ function logout(req, res) {
 
 /* ---------- API ---------- */
 async function createOrder(req, res) {
-  const body = await readBody(req);
+  const body = await readBody(req, 3_000_000); // room for a payment screenshot
   // Supplier-linked items: make sure price & stock are fresh (≤ 30 s old) before pricing the order
   if (Array.isArray(body.items) && catalog().PRODUCTS.some((p) => body.items.some((it) => it && it.slug === p.slug && p.variants[it.vi] && p.variants[it.vi].source))) {
     await refreshSupplier(30_000);
@@ -807,6 +811,9 @@ async function createOrder(req, res) {
   const info = (SITE.paymentInfo || {})[payment.method] || {};
   if (!useBalance && !info.redirect && !payment.trx) return send(res, 400, { error: "Transaction ID is required." });
   if (useBalance || info.redirect) { payment.trx = ""; payment.sender = ""; }
+  const needProof = !useBalance && PROOF_PROVIDERS.includes(info.provider);
+  if (needProof) payment.sender = "";
+  if (needProof && !body.proof) return send(res, 400, { error: "Please upload a screenshot of your payment." });
   if (!Array.isArray(body.items) || !body.items.length || body.items.length > 50) return send(res, 400, { error: "Your cart is empty." });
 
   // Prices are always recalculated here; the browser's numbers are never trusted.
@@ -839,6 +846,9 @@ async function createOrder(req, res) {
   if (payment.trx && trxUsed(payment.trx)) {
     return send(res, 400, { error: "This Transaction ID was already used." });
   }
+  if (needProof) {
+    try { payment.proof = saveProof(body.proof); } catch (e) { return send(res, 400, { error: e.message }); }
+  }
   const order = {
     id: newOrderId(),
     token: crypto.randomBytes(16).toString("hex"),
@@ -859,7 +869,7 @@ async function createOrder(req, res) {
     order.status = "processing";
   }
   if (info.redirect) {
-    try { await createInvoice(order, req, `/order.html?id=${order.id}&t=${order.token}`); }
+    try { await createInvoice(order, req, `/order.html?id=${order.id}&t=${order.token}`, ORDER_TTL / 1000); }
     catch (e) { console.error(e.message); return send(res, 502, { error: "Could not start the Cryptomus payment. Please try another method." }); }
   } else if (payment.auto) {
     await tryVerify(order);
@@ -885,19 +895,75 @@ async function customerVerify(req, res, id, token) {
   send(res, 200, publicOrder(await verifyOrder(id)));
 }
 
-// Re-check an order's Binance payment and save only that order's payment/status
-async function verifyOrder(id) {
+// Re-check an order's payment and save only that order's payment/status.
+// reopen: a late payment on an order that expired unpaid still counts (e.g. a Cryptomus webhook).
+async function verifyOrder(id, { reopen = false } = {}) {
   const o = loadOrders().find((x) => x.id === id);
   await tryVerify(o);
   const orders = loadOrders();
   const cur = orders.find((x) => x.id === id);
   cur.payment = o.payment;
-  if (o.payment.verified && cur.status === "pending") cur.status = "processing";
+  if (o.payment.verified && (cur.status === "pending" || (reopen && cur.status === "cancelled" && cur.expired))) {
+    cur.status = "processing";
+    if (cur.expired) { delete cur.expired; delete cur.cancelledAt; delete cur.cancelReason; }
+  }
   autoDeliver(cur);
   saveOrders(orders);
   if (cur.status === "processing") return (await supplierDeliver(id)) || cur;
   return cur;
 }
+
+/* ---------- Unpaid orders: cancel & 20-minute expiry ---------- */
+const ORDER_TTL = 20 * 60_000;
+const isOpenUnpaid = (o) => o && o.status === "pending" && !o.payment.verified;
+const isOverdue = (o) => isOpenUnpaid(o) && Date.now() - Date.parse(o.createdAt) >= ORDER_TTL;
+
+// Cancels an unpaid order after one last payment check, so a paid order is never cancelled.
+// Returns the order as saved.
+async function cancelUnpaid(id, reason, { expired = false } = {}) {
+  let o = loadOrders().find((x) => x.id === id);
+  if (!isOpenUnpaid(o)) return o;
+  if (o.payment.auto) {
+    o = await verifyOrder(id);
+    if (!isOpenUnpaid(o)) return o;
+    if (expired && o.payment.inProgress) return o; // Cryptomus is still confirming a payment
+  }
+  const orders = loadOrders();
+  const cur = orders.find((x) => x.id === id);
+  if (!isOpenUnpaid(cur)) return cur;
+  cur.status = "cancelled";
+  cur.cancelledAt = new Date().toISOString();
+  cur.cancelReason = reason;
+  if (expired) cur.expired = true;
+  saveOrders(orders);
+  console.log(`Order ${id} cancelled: ${reason}`);
+  return cur;
+}
+
+async function customerCancel(req, res, id, token) {
+  const o = loadOrders().find((x) => x.id === id);
+  if (!o || !token || o.token !== token) return send(res, 404, { error: "Order not found." });
+  if (!isOpenUnpaid(o)) return send(res, 400, { error: "This order can't be cancelled — its payment is already confirmed or it was closed." });
+  const cur = await cancelUnpaid(id, "Cancelled by the customer.");
+  if (cur.status !== "cancelled") return send(res, 409, { ...publicOrder(cur), error: "Your payment was just confirmed, so the order was not cancelled." });
+  send(res, 200, publicOrder(cur));
+}
+
+// Every minute: re-check unpaid orders automatically, and cancel those still unpaid after 20 minutes.
+let unpaidSweepRunning = false;
+async function sweepUnpaid() {
+  if (unpaidSweepRunning) return;
+  unpaidSweepRunning = true;
+  try {
+    for (const o of loadOrders().filter(isOpenUnpaid)) {
+      try {
+        if (isOverdue(o)) await cancelUnpaid(o.id, "Expired — payment was not confirmed within 20 minutes.", { expired: true });
+        else if (o.payment.auto && Date.now() - (o.payment.lastCheck || 0) >= 55_000) await verifyOrder(o.id);
+      } catch (e) { console.error(`Unpaid order check ${o.id}:`, e.message); }
+    }
+  } finally { unpaidSweepRunning = false; }
+}
+setInterval(sweepUnpaid, 60_000).unref();
 
 /* ---------- Wallet API ---------- */
 function walletInfo(req, res) {
@@ -921,7 +987,7 @@ async function createTopup(req, res) {
   const u = sessionUser(req);
   if (!u) return send(res, 401, { error: "Please log in." });
   if (!isReseller(u)) return send(res, 403, { error: "Your reseller application is not approved yet." });
-  const body = await readBody(req);
+  const body = await readBody(req, 3_000_000); // room for a payment screenshot
   const { SITE } = catalog();
   const amount = r2(Number(body.amount));
   const min = SITE.topupMin || 1, max = SITE.topupMax || 1000;
@@ -932,6 +998,10 @@ async function createTopup(req, res) {
   if (info.redirect) { payment.trx = ""; payment.sender = ""; }
   else if (!payment.trx) return send(res, 400, { error: "Transaction ID is required." });
   if (payment.trx && trxUsed(payment.trx)) return send(res, 400, { error: "This Transaction ID was already used." });
+  if (PROOF_PROVIDERS.includes(info.provider)) {
+    payment.sender = "";
+    try { payment.proof = saveProof(body.proof); } catch (e) { return send(res, 400, { error: e.message }); }
+  }
   if (info.provider) {
     payment.auto = true;
     payment.provider = info.provider;
@@ -956,7 +1026,7 @@ async function cryptomusWebhook(req, res) {
   if (!cryptomusWebhookValid(data)) return send(res, 401, { error: "Bad signature" });
   const id = String(data.order_id || "");
   if (id.startsWith("TU")) await verifyTopup(id);
-  else if (loadOrders().some((o) => o.id === id && o.status === "pending")) await verifyOrder(id);
+  else if (loadOrders().some((o) => o.id === id && (o.status === "pending" || (o.status === "cancelled" && o.expired)))) await verifyOrder(id, { reopen: true });
   send(res, 200, { ok: true });
 }
 
@@ -986,9 +1056,10 @@ async function changePassword(req, res) {
   send(res, 200, { ok: true });
 }
 
-function getOrder(req, res, id, token) {
-  const o = loadOrders().find((x) => x.id === id);
+async function getOrder(req, res, id, token) {
+  let o = loadOrders().find((x) => x.id === id);
   if (!o || !token || o.token !== token) return send(res, 404, { error: "Order not found." });
+  if (isOverdue(o)) o = await cancelUnpaid(id, "Expired — payment was not confirmed within 20 minutes.", { expired: true });
   send(res, 200, publicOrder(o));
 }
 
@@ -1244,15 +1315,43 @@ async function adminSaveSettings(req, res) {
 }
 
 // Image upload: base64 body, only real PNG/JPEG/WEBP/GIF files (checked by their first bytes), max 2 MB
+// Image type from the file's first bytes (null if it isn't a PNG/JPG/WEBP/GIF)
+function imageExt(buf) {
+  const sig = buf.subarray(0, 12);
+  return sig[0] === 0x89 && sig.toString("ascii", 1, 4) === "PNG" ? "png"
+    : sig[0] === 0xff && sig[1] === 0xd8 ? "jpg"
+    : sig.toString("ascii", 0, 4) === "RIFF" && sig.toString("ascii", 8, 12) === "WEBP" ? "webp"
+    : sig.toString("ascii", 0, 3) === "GIF" ? "gif" : null;
+}
+
+// Payment screenshots: kept on the data volume outside the public folder; only the admin can open them.
+const proofsDir = path.join(storeDir, "proofs");
+const PROOF_PROVIDERS = ["binance"]; // methods where the customer uploads a screenshot instead of their sender ID
+function saveProof(dataUrl) {
+  const buf = Buffer.from(String(dataUrl || "").replace(/^data:[^,]+,/, ""), "base64");
+  if (!buf.length) throw new Error("Please upload a screenshot of your payment.");
+  if (buf.length > 2_000_000) throw new Error("Screenshot must be smaller than 2 MB.");
+  const ext = imageExt(buf);
+  if (!ext) throw new Error("Screenshot must be a PNG, JPG or WEBP image.");
+  fs.mkdirSync(proofsDir, { recursive: true });
+  const name = `${Date.now().toString(36)}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
+  fs.writeFileSync(path.join(proofsDir, name), buf);
+  return name;
+}
+function adminProof(res, name) {
+  if (!/^[a-z0-9]+-[a-f0-9]{12}\.(png|jpg|webp|gif)$/.test(name)) return send(res, 404, { error: "Not found." });
+  const file = path.join(proofsDir, name);
+  if (!fs.existsSync(file)) return send(res, 404, { error: "Not found." });
+  const type = { png: "image/png", jpg: "image/jpeg", webp: "image/webp", gif: "image/gif" }[name.split(".").pop()];
+  res.writeHead(200, { "Content-Type": type, "Cache-Control": "private, no-store" });
+  res.end(fs.readFileSync(file));
+}
+
 async function adminUpload(req, res) {
   const body = await readBody(req, 3_000_000);
   const buf = Buffer.from(String(body.data || "").replace(/^data:[^,]+,/, ""), "base64");
   if (!buf.length || buf.length > 2_000_000) return send(res, 400, { error: "Image must be smaller than 2 MB." });
-  const sig = buf.subarray(0, 12);
-  const ext = sig[0] === 0x89 && sig.toString("ascii", 1, 4) === "PNG" ? "png"
-    : sig[0] === 0xff && sig[1] === 0xd8 ? "jpg"
-    : sig.toString("ascii", 0, 4) === "RIFF" && sig.toString("ascii", 8, 12) === "WEBP" ? "webp"
-    : sig.toString("ascii", 0, 3) === "GIF" ? "gif" : null;
+  const ext = imageExt(buf);
   if (!ext) return send(res, 400, { error: "Only PNG, JPG, WEBP or GIF images." });
   const dir = path.join(storeDir, "uploads"); // on the data volume, so uploads survive redeploys
   fs.mkdirSync(dir, { recursive: true });
@@ -1444,6 +1543,7 @@ async function api(req, res, url) {
   if (req.method === "POST" && parts[1] === "orders" && parts.length === 2) return createOrder(req, res);
   if (req.method === "GET" && parts[1] === "orders" && parts.length === 3) return getOrder(req, res, parts[2], url.searchParams.get("t"));
   if (req.method === "POST" && parts[1] === "orders" && parts[3] === "verify" && parts.length === 4) return customerVerify(req, res, parts[2], url.searchParams.get("t"));
+  if (req.method === "POST" && parts[1] === "orders" && parts[3] === "cancel" && parts.length === 4) return customerCancel(req, res, parts[2], url.searchParams.get("t"));
   if (parts[1] === "admin") {
     if (!isAdmin(req)) return send(res, 401, { error: "Wrong admin key." });
     if (req.method === "GET" && parts[2] === "orders" && parts.length === 3) return send(res, 200, loadOrders());
@@ -1463,6 +1563,7 @@ async function api(req, res, url) {
 
     if (req.method === "POST" && parts[2] === "users" && parts[4] === "review" && parts.length === 5) return adminReviewApplication(req, res, parts[3]);
     if (route === "GET admin/topups") return send(res, 200, loadTopups());
+    if (req.method === "GET" && parts[2] === "proofs" && parts.length === 4) return adminProof(res, parts[3]);
 
     if (route === "GET admin/health") return send(res, 200, { dataDir: storeDir, dataAtRisk });
     if (route === "GET admin/catalog") { await refreshSupplier(30_000); return send(res, 200, liveCatalog()); }

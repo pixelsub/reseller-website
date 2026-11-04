@@ -59,8 +59,8 @@ const Cart = {
 
 /* Per-provider wording for the payment form */
 const PROVIDER_TEXT = {
-  binance: { name: "Binance", idLabel: "Binance Order ID", idPh: "e.g. 312345678901234567", fromLabel: "Your Binance ID / email", fromPh: "Binance ID you paid from",
-             how: "Open Binance → Pay → Send, enter the Pay ID and the exact USDT amount. Then paste the Order ID below — it's checked automatically." },
+  binance: { name: "Binance", idLabel: "Binance Order ID", idPh: "e.g. 312345678901234567", proof: true,
+             how: "Open Binance → Pay → Send, enter the Pay ID and the exact USDT amount. Then paste the Order ID and upload a screenshot of the payment below — it's checked automatically." },
   bybit:   { name: "Bybit", idLabel: "Bybit Transfer ID", idPh: "Transaction ID from Bybit", fromLabel: "Your Bybit UID / email", fromPh: "UID you sent from",
              how: "Open Bybit → Assets → Transfer → Send to Bybit user (UID), coin USDT, exact amount. Then paste the transfer ID below — it's checked automatically." },
 };
@@ -94,8 +94,37 @@ function payFields(allowBalance) {
   return `
     <label>Payment method<select name="pay">${opts.join("")}</select></label>
     <div class="pay-box"></div>
-    <label class="ext-field">Sender number<input name="sender" maxlength="40" placeholder="Number you paid from"></label>
-    <label class="ext-field">Transaction ID<input name="trx" required maxlength="60" placeholder="e.g. 8N7A6B5C4D"></label>`;
+    <label class="ext-field f-sender">Sender number<input name="sender" maxlength="40" placeholder="Number you paid from"></label>
+    <label class="ext-field">Transaction ID<input name="trx" required maxlength="60" placeholder="e.g. 8N7A6B5C4D"></label>
+    <label class="ext-field f-proof">Payment screenshot<input type="file" name="proof" accept="image/png,image/jpeg,image/webp"></label>`;
+}
+
+// Shrinks a screenshot to a JPEG of at most 1600 px so it uploads fast (phone screenshots can be several MB)
+function imageToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      const g = c.getContext("2d");
+      g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("That file isn't an image we can read. Use a PNG or JPG screenshot.")); };
+    img.src = url;
+  });
+}
+
+// What the payment form sends to the server (pay, sender, trx and the screenshot if one is needed)
+async function payBody(form) {
+  const f = new FormData(form);
+  const body = { pay: f.get("pay"), sender: f.get("sender"), trx: f.get("trx") };
+  const file = form.proof.files[0];
+  if (!form.proof.closest("label").hidden && file) body.proof = await imageToDataUrl(file);
+  return body;
 }
 
 function bindPayForm(form, getAmount, onChange) {
@@ -105,8 +134,12 @@ function bindPayForm(form, getAmount, onChange) {
     const bal = m === "Balance";
     const info = (SITE.paymentInfo || {})[m] || {};
     const noTrx = bal || info.redirect;
+    const proof = !noTrx && !!(PROVIDER_TEXT[info.provider] || {}).proof;
     $$(".ext-field", form).forEach((l) => (l.hidden = noTrx));
+    $(".f-sender", form).hidden = noTrx || proof;
+    $(".f-proof", form).hidden = !proof;
     form.trx.required = !noTrx;
+    form.proof.required = proof;
     if (bal) {
       const short = USER.balance < total;
       box.innerHTML = `<div class="pay-title">Pay from <b>balance</b></div>
@@ -128,8 +161,10 @@ function bindPayForm(form, getAmount, onChange) {
         <div class="muted small">${t.how}</div>`;
       form.trx.previousSibling.textContent = t.idLabel;
       form.trx.placeholder = t.idPh;
-      form.sender.previousSibling.textContent = t.fromLabel;
-      form.sender.placeholder = t.fromPh;
+      if (t.fromLabel) {
+        form.sender.previousSibling.textContent = t.fromLabel;
+        form.sender.placeholder = t.fromPh;
+      }
     }
     if (onChange) onChange(m);
   };
@@ -642,17 +677,13 @@ function initCart() {
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const f = new FormData(form);
       const btn = $("#place-btn"), err = $("#form-error");
       btn.disabled = true; btn.textContent = "Placing order…"; err.hidden = true;
       try {
         const r = await fetch("/api/orders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            items: Cart.get(),
-            pay: f.get("pay"), sender: f.get("sender"), trx: f.get("trx"),
-          }),
+          body: JSON.stringify({ items: Cart.get(), ...(await payBody(form)) }),
         });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || "Could not place the order. Please try again.");
@@ -763,7 +794,13 @@ async function initOrder() {
             ${o.waitingAdmin ? `<p>✅ Your payment is confirmed.</p>
               <p><b>⏳ Waiting for admin approval.</b> Your order will be delivered here as soon as it is approved — you don't need to do anything. Keep this page or your order link.</p>` : ""}
             ${o.status === "processing" && !o.waitingAdmin ? `<p>${o.payment.method === "Balance" ? "✅ Paid from your balance. " : o.payment.verified ? `✅ Payment confirmed automatically via ${esc(o.payment.method)}. ` : "Your payment is verified. "}Your account is being prepared and will appear here shortly.</p>` : ""}
-            ${o.status === "cancelled" ? `<p>This order was cancelled. Contact us at <a href="mailto:${SITE.email}">${SITE.email}</a> if you think this is a mistake.</p>` : ""}
+            ${o.status === "cancelled" ? (o.expired
+              ? `<p>⌛ This order expired because the payment was not confirmed within 20 minutes. If you already paid, contact us on <a href="${waLink(`Order ${o.id} expired but I paid`)}" target="_blank" rel="noopener">WhatsApp</a> with your order ID.</p>`
+              : o.cancelReason === "Cancelled by the customer." ? `<p>You cancelled this order.</p>`
+              : `<p>This order was cancelled. Contact us at <a href="mailto:${SITE.email}">${SITE.email}</a> if you think this is a mistake.</p>`) : ""}
+            ${o.expiresAt ? `
+              <p class="muted small expire-line">${ICON.clock} Pay within <b id="expire-left">20:00</b> — unpaid orders are cancelled automatically.</p>
+              <button class="btn btn-cancel" id="cancel-btn">Cancel order</button>` : ""}
           </div>
           ${!o.customer.username && o.status !== "delivered" ? `<div class="card save-link"><p class="small"><b>Ordered as guest:</b> save this link — it's the only way to see your account details.</p>${copyRow("Your order link", location.href, location.href)}</div>` : ""}
           ${o.delivery ? `<div class="card delivery"><h3>${ICON.box} Your account details</h3><pre>${esc(o.delivery)}</pre>
@@ -778,6 +815,7 @@ async function initOrder() {
           ${o.payment.auto ? `<div class="sum-row"><span>Amount</span><span>${esc(o.payment.amountUsdt)} USDT</span></div>` : ""}
           ${o.payment.sender ? `<div class="sum-row"><span>Sender</span><span>${esc(o.payment.sender)}</span></div>` : ""}
           ${o.payment.trx ? `<div class="sum-row"><span>Transaction ID</span><span>${esc(o.payment.trx)}</span></div>` : ""}
+          ${o.payment.proof ? `<div class="sum-row"><span>Screenshot</span><span>Uploaded</span></div>` : ""}
           ${o.refunded ? `<div class="sum-row"><span>Refund</span><span>Returned to balance</span></div>` : ""}
           <div class="sum-row"><span>Paid</span><span>${o.payment.verified || o.status === "processing" || o.status === "delivered" ? '<span class="status s-delivered">Confirmed</span>' : '<span class="status s-pending">Not confirmed</span>'}</span></div>
           <button class="btn btn-outline btn-block" id="refresh-btn" style="margin-top:14px">Refresh status</button>
@@ -794,6 +832,27 @@ async function initOrder() {
       $(".verify-note").textContent = (r.ok ? d.payment && d.payment.verifyNote : d.error) || "Not found yet.";
       vb.disabled = false; vb.textContent = o.payment.provider === "cryptomus" ? "I've paid — check now" : "Check payment again";
     });
+    const cb = $("#cancel-btn");
+    if (cb) cb.addEventListener("click", async () => {
+      if (!confirm("Cancel this order? Only do this if you have not paid.")) return;
+      cb.disabled = true; cb.textContent = "Cancelling…";
+      const r = await fetch(`/api/orders/${encodeURIComponent(o.id)}/cancel?t=${encodeURIComponent(token)}`, { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok && d.error) alert(d.error);
+      location.reload();
+    });
+    // Countdown to the 20-minute expiry; reload when it runs out so the server can close the order
+    const left = $("#expire-left");
+    if (left) {
+      const end = Date.parse(o.expiresAt);
+      const tick = () => {
+        const s = Math.max(0, Math.round((end - Date.now()) / 1000));
+        left.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+        if (s === 0) { clearInterval(timer); setTimeout(() => location.reload(), 1500); }
+      };
+      const timer = setInterval(tick, 1000);
+      tick();
+    }
     // Coming back from the Cryptomus page: check once automatically
     if (vb && o.payment.provider === "cryptomus" && document.referrer && !document.referrer.startsWith(location.origin)) vb.click();
   } catch {
@@ -831,6 +890,16 @@ function initAdmin() {
 
   const api = (path, opts = {}) =>
     fetch(path, { ...opts, headers: { "Content-Type": "application/json", "x-admin-key": sessionStorage.getItem(KEY) || "" } });
+  // Payment screenshots are private: fetch with the admin key, then open the image in a new tab
+  outer.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-proof]");
+    if (!b) return;
+    const win = window.open("", "_blank");
+    const r = await api(`/api/admin/proofs/${encodeURIComponent(b.dataset.proof)}`);
+    if (!r.ok) { if (win) win.close(); return alert("Screenshot not found."); }
+    const url = URL.createObjectURL(await r.blob());
+    if (win) win.location.href = url; else location.href = url;
+  });
 
   const SECTIONS = [
     ["dashboard", "Dashboard", ICON.chart], ["orders", "Orders", ICON.box], ["products", "Products", ICON.tag],
@@ -877,7 +946,7 @@ function initAdmin() {
           <td class="muted">${fmtDate(t.createdAt)}</td>
           <td><b>${esc(t.username)}</b></td>
           <td><b>${money(t.amount)}</b>${t.payment.auto ? `<br><span class="muted small">${esc(t.payment.amountUsdt)} USDT</span>` : ""}</td>
-          <td>${esc(t.payment.method)}<br><span class="muted small">TrxID ${esc(t.payment.trx)}${t.payment.sender ? " · from " + esc(t.payment.sender) : ""}</span>
+          <td>${esc(t.payment.method)}<br><span class="muted small">TrxID ${esc(t.payment.trx)}${t.payment.sender ? " · from " + esc(t.payment.sender) : ""}</span>${t.payment.proof ? `<br><button type="button" class="link-btn" data-proof="${esc(t.payment.proof)}">View screenshot</button>` : ""}
             ${t.payment.verifyNote ? `<br><span class="muted small">${esc(t.payment.verifyNote)}</span>` : ""}</td>
           <td><span class="status ${t.status === "completed" ? "s-delivered" : t.status === "rejected" ? "s-cancelled" : "s-pending"}">${t.status}</span>${t.completedBy ? `<br><span class="muted small">by ${esc(t.completedBy)}</span>` : ""}</td>
           <td class="tu-actions">${t.status === "pending" ? `
@@ -1053,7 +1122,8 @@ function initAdmin() {
               <h5 class="label">Customer</h5>
               <p>${o.customer.username ? `Reseller · <b>${esc(o.customer.username)}</b>` : "Guest"}${o.customer.name ? "<br>" + esc(o.customer.name) : ""}${o.customer.phone ? "<br>" + esc(o.customer.phone) : ""}</p>
               <h5 class="label">Payment</h5>
-              <p>${esc(o.payment.method)}${o.payment.auto ? ` · <b>${esc(o.payment.amountUsdt)} USDT</b>` : ""}${o.payment.trx ? `<br>TrxID: <b>${esc(o.payment.trx)}</b>` : ""}${o.refunded ? '<br><span class="status s-cancelled">Refunded to balance</span>' : ""}${o.payment.sender ? "<br>From: " + esc(o.payment.sender) : ""}</p>
+              <p>${esc(o.payment.method)}${o.payment.auto ? ` · <b>${esc(o.payment.amountUsdt)} USDT</b>` : ""}${o.payment.trx ? `<br>TrxID: <b>${esc(o.payment.trx)}</b>` : ""}${o.refunded ? '<br><span class="status s-cancelled">Refunded to balance</span>' : ""}${o.payment.sender ? "<br>From: " + esc(o.payment.sender) : ""}${o.payment.proof ? `<br><button type="button" class="link-btn" data-proof="${esc(o.payment.proof)}">View payment screenshot</button>` : ""}</p>
+              ${o.cancelReason ? `<p class="muted small">${esc(o.cancelReason)}</p>` : ""}
               ${o.payment.auto ? `
                 <p>${o.payment.verified ? '<span class="status s-delivered">Auto-verified</span>' : '<span class="status s-pending">Not verified</span>'}</p>
                 ${o.payment.verifyNote ? `<p class="muted small">${esc(o.payment.verifyNote)}</p>` : ""}
@@ -1381,10 +1451,12 @@ async function initAccount() {
       $$("[data-amt]", form).forEach((b) => b.addEventListener("click", () => { form.amount.value = b.dataset.amt; refresh(); }));
       form.addEventListener("submit", async (e) => {
         e.preventDefault();
-        const f = new FormData(form), err = $("#topup-error"), btn = $("#topup-btn");
+        const err = $("#topup-error"), btn = $("#topup-btn");
         err.hidden = true; btn.disabled = true; btn.textContent = "Submitting…";
+        let pay;
+        try { pay = await payBody(form); } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; btn.textContent = "Submit"; return; }
         const r = await fetch("/api/wallet/topup", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ amount: amt(), pay: f.get("pay"), sender: f.get("sender"), trx: f.get("trx") }) });
+          body: JSON.stringify({ amount: amt(), ...pay }) });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) { err.textContent = d.error || "Could not submit."; err.hidden = false; btn.disabled = false; btn.textContent = "Submit"; return; }
         if (d.payment && d.payment.payUrl && d.status === "pending") { location.href = d.payment.payUrl; return; }

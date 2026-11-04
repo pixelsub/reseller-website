@@ -498,6 +498,11 @@ select:focus, .checkout input:focus, .reseller-form input:focus { border-color: 
 .order-id-row .copy-row b { font-size: 19px; letter-spacing: .03em; }
 .verify-note { background: #fffbeb; color: #92400e; border-radius: 9px; padding: 9px 12px; font-size: 13.5px; }
 .verify-note:empty { display: none; }
+.expire-line { display: flex; align-items: center; gap: 6px; margin-top: 14px; }
+.expire-line svg { width: 15px; height: 15px; flex-shrink: 0; }
+.btn-cancel { background: #fff; color: #dc2626; border-color: #fecaca; margin-top: 8px; }
+.btn-cancel:hover { background: #fef2f2; }
+input[type="file"] { padding: 9px; background: var(--bg-soft); cursor: pointer; }
 .delivery { padding: 22px; border-color: var(--green); }
 .delivery h3 { display: flex; gap: 8px; align-items: center; font-size: 16px; margin-bottom: 10px; }
 .delivery h3 svg { width: 18px; height: 18px; color: var(--green); }
