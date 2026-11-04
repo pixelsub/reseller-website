@@ -267,7 +267,7 @@ function renderFooter() {
         <h4>Contact</h4>
         <a href="${waLink()}" target="_blank" rel="noopener">WhatsApp</a>
         <a href="${tgLink()}" target="_blank" rel="noopener">Telegram</a>
-        <span class="muted small">${SITE.hours}</span>
+        <span class="muted small">Open 24/7</span>
       </div>
     </div>
     <div class="container footer-bottom">
@@ -411,7 +411,6 @@ function initHome() {
     b.setAttribute("aria-expanded", open);
   }));
 
-  $$("[data-hours]").forEach((e) => (e.textContent = SITE.hours));
   $$("[data-wa]").forEach((a) => (a.href = waLink("Hi " + SITE.name + ", I have a question.")));
   $$("[data-tg]").forEach((a) => (a.href = tgLink()));
 }
@@ -483,7 +482,7 @@ function initProduct() {
           <div class="oc-save" id="oc-save"></div>
           <button class="btn btn-primary btn-block" id="btn-add">${ICON.cart} Add to cart</button>
           <button class="btn btn-buy btn-block" id="btn-buy">${ICON.arrow} Buy now</button>
-          <p class="muted small">Payments are verified by the admin during ${esc(SITE.hours)}. Account details are sent right after.</p>
+          <p class="muted small">Payments are verified automatically, 24/7. Account details are sent right after.</p>
         </div>
       </aside>
     </div>
@@ -615,7 +614,7 @@ function initCart() {
             <div class="form-error" id="form-error" hidden></div>
             <button class="btn btn-primary btn-block" type="submit" id="place-btn">Place order · ${money(subtotal)}</button>
           </form>
-          <p class="muted small">The admin verifies your payment ${esc(SITE.hours)}. Your account details will appear on your order page.</p>
+          <p class="muted small">Your payment is verified automatically, 24/7. Your account details will appear on your order page.</p>
         </aside>
       </div>`;
 
@@ -759,7 +758,7 @@ async function initOrder() {
               <p class="verify-note">${esc(o.payment.verifyNote || "")}</p>
               <p class="muted small">Make sure you sent <b>${esc(o.payment.amountUsdt)} USDT</b> and entered the correct transaction ID (<b>${esc(o.payment.trx)}</b>).</p>
               <button class="btn btn-primary" id="verify-btn">Check payment again</button>` : ""}
-            ${o.status === "pending" && !o.payment.auto ? `<p>Thanks! We received your order. The admin will check your payment (${esc(o.payment.method)}, TrxID <b>${esc(o.payment.trx)}</b>) ${esc(SITE.hours)}. Bookmark this page — your account details will appear here.</p>` : ""}
+            ${o.status === "pending" && !o.payment.auto ? `<p>Thanks! We received your order. The admin will check your payment (${esc(o.payment.method)}, TrxID <b>${esc(o.payment.trx)}</b>) as soon as possible. Bookmark this page — your account details will appear here.</p>` : ""}
             ${o.status === "delivered" ? `<p>✅ Your order is complete. Your account details are below.</p>` : ""}
             ${o.waitingAdmin ? `<p>✅ Your payment is confirmed.</p>
               <p><b>⏳ Waiting for admin approval.</b> Your order will be delivered here as soon as it is approved — you don't need to do anything. Keep this page or your order link.</p>` : ""}

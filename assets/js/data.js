@@ -22,7 +22,7 @@ const SITE = {
   whatsapp: "8801857234526",        // WhatsApp number, country code, no + or spaces
   telegram: "pixelsub09",           // Telegram username without @
   email: "support@pixelsub.shop",
-  hours: "10:00 AM – 12:00 AM (GMT+6)",
+  hours: "24/7",
   payments: ["Binance Pay", "Bybit", "Cryptomus"],
   topupMin: 1,                      // reseller "Add balance" limits ($)
   topupMax: 1000,

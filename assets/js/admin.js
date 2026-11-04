@@ -553,9 +553,7 @@ async function adminSettings({ el, api, reload }) {
       <div class="card panel">
         <h3>Store</h3>
         <label>Store name<input name="name" value="${esc(S.name)}" maxlength="40" required></label>
-        <label>Domain<input name="domain" value="${esc(S.domain || "")}" maxlength="60" placeholder="pixelsub.shop"></label>
-        <label>Working hours (shown to customers)<input name="hours" value="${esc(S.hours || "")}" maxlength="80"></label>
-      </div>
+        <label>Domain<input name="domain" value="${esc(S.domain || "")}" maxlength="60" placeholder="pixelsub.shop"></label>      </div>
       <div class="card panel">
         <h3>Contact information</h3>
         <label>Support email<input name="email" type="email" value="${esc(S.email || "")}" maxlength="100"></label>
@@ -601,7 +599,7 @@ async function adminSettings({ el, api, reload }) {
     $$("[data-pid]", f).forEach((i) => (paymentIds[i.dataset.pid] = i.value));
     const body = {
       site: {
-        name: f.name.value, domain: f.domain.value, hours: f.hours.value,
+        name: f.name.value, domain: f.domain.value,
         email: f.email.value, whatsapp: f.whatsapp.value, telegram: f.telegram.value,
         bulkMinQty: f.bulkMinQty.value, topupMin: f.topupMin.value, topupMax: f.topupMax.value,
         payments: $$('[name="pm"]:checked', f).map((c) => c.value), paymentIds,
