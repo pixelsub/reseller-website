@@ -416,6 +416,7 @@ select:focus, .checkout input:focus, .reseller-form input:focus { border-color: 
 .nav-user svg { width: 17px; height: 17px; color: var(--primary); }
 
 .nav-user b { font-size: 13px; color: var(--green); background: var(--green-50); padding: 1px 7px; border-radius: 99px; }
+.nav-user b.pend { color: #b45309; background: #fffbeb; }
 .ext-field[hidden] { display: none; }
 .bal-short { color: var(--red); }
 .bal-short a { color: var(--primary); font-weight: 600; }
@@ -456,6 +457,14 @@ select:focus, .checkout input:focus, .reseller-form input:focus { border-color: 
 .amt-minus { color: var(--red); font-weight: 700; }
 @media (max-width: 1020px) { .acc-grid { grid-template-columns: 1fr 1fr; } .acc-two { grid-template-columns: 1fr; } }
 @media (max-width: 520px) { .acc-grid { grid-template-columns: 1fr; } .acc-head { flex-direction: column; align-items: flex-start; } .acc-bal { text-align: left; } }
+
+.app-status { padding: 22px; display: grid; gap: 10px; justify-items: start; margin-bottom: 20px; }
+.app-status h3 { font-size: 20px; }
+.app-status.pend { border-color: #fde68a; background: #fffdf5; }
+.app-status.rej { border-color: #fecaca; background: #fffafa; }
+.auth-card small { font-weight: 400; }
+.auth-card textarea, .auth-card select { padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; font: inherit; font-size: 14.5px; background: #fff; width: 100%; outline: none; }
+.acc-form textarea { padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; font: inherit; font-size: 14.5px; width: 100%; outline: none; }
 
 /* Login / join */
 .auth-grid { display: grid; grid-template-columns: 420px 1fr; gap: 40px; align-items: center; padding: 30px 0; }

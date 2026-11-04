@@ -12,7 +12,11 @@ const getProduct = (slug) => PRODUCTS.find((p) => p.slug === slug);
 const hasBulk = (v) => v.bulkPrice != null && v.bulkPrice < v.price;
 // Logged-in reseller (null for guests). Only resellers get the 2+ price; the server enforces the same rule.
 let USER = null;
-const unitPrice = (v, qty) => (USER && hasBulk(v) && qty >= SITE.bulkMinQty ? v.bulkPrice : v.price);
+// Only approved resellers get the 2+ price and a wallet; a pending/rejected applicant is a normal member
+const isRes = () => !!(USER && USER.reseller);
+// Where to send someone who wants the reseller price
+const resellerCta = (next) => (USER ? `<a href="account.html">${USER.status === "rejected" ? "Fix your reseller application" : "Your reseller application is under review"}</a>` : `<a href="login.html?mode=join&next=${encodeURIComponent(next)}">Apply as reseller</a>`);
+const unitPrice = (v, qty) => (isRes() && hasBulk(v) && qty >= SITE.bulkMinQty ? v.bulkPrice : v.price);
 const minPrice = (p) => Math.min(...p.variants.map((v) => (hasBulk(v) ? v.bulkPrice : v.price)));
 const totalStock = (p) => p.variants.reduce((a, v) => a + v.stock, 0);
 const productHasBulk = (p) => p.variants.some(hasBulk);
@@ -215,7 +219,7 @@ function renderHeader() {
         ${USER ? `<a href="account.html" class="nav-login-link">My Profile</a>` : `<a href="login.html" class="nav-login-link">Login / Join</a>`}
       </nav>
       ${USER
-        ? `<a class="nav-user" href="account.html" title="My profile">${ICON.users}<span>${esc(USER.username)}</span><b>${money(USER.balance)}</b></a>`
+        ? `<a class="nav-user" href="account.html" title="My profile">${ICON.users}<span>${esc(USER.username)}</span>${USER.reseller ? `<b>${money(USER.balance)}</b>` : `<b class="pend">${USER.status === "rejected" ? "Not approved" : "Pending"}</b>`}</a>`
         : `<a class="btn btn-outline nav-login" href="login.html">Login</a>`}
       <a class="btn btn-primary nav-cart" href="cart.html">${ICON.cart}<span>Cart</span><span class="cart-count" hidden>0</span></a>
       <button class="nav-toggle" aria-label="Menu" aria-expanded="false">${ICON.menu}</button>
@@ -511,7 +515,7 @@ function initProduct() {
     qIn.value = qty;
     const unit = unitPrice(v, qty);
     const bulk = hasBulk(v);
-    const isBulk = !!USER && bulk && qty >= SITE.bulkMinQty;
+    const isBulk = isRes() && bulk && qty >= SITE.bulkMinQty;
 
     $("#oc-title").textContent = `${v.pkg} – ${v.duration}`;
     $("#oc-unit").textContent = money(unit);
@@ -524,13 +528,13 @@ function initProduct() {
 
     $("#tier-box").innerHTML = bulk ? `
       <div class="tier ${!isBulk ? "on" : ""}"><small>Buy 1</small><strong>${money(v.price)}</strong><span>per piece</span></div>
-      <div class="tier ${isBulk ? "on" : ""}"><small>Buy ${SITE.bulkMinQty}+ (reseller)</small><strong>${money(v.bulkPrice)}</strong><span>${USER
+      <div class="tier ${isBulk ? "on" : ""}"><small>Buy ${SITE.bulkMinQty}+ (reseller)</small><strong>${money(v.bulkPrice)}</strong><span>${isRes()
         ? `per piece · save ${money(v.price - v.bulkPrice)} each`
-        : `reseller account only · <a href="login.html?next=${encodeURIComponent(location.pathname + location.search)}">Join free</a>`}</span></div>`
+        : `approved resellers only · ${resellerCta(location.pathname + location.search)}`}</span></div>`
       : `<div class="tier on single"><small>Flat price</small><strong>${money(v.price)}</strong><span>same price for any quantity</span></div>`;
 
     $("#oc-hint").innerHTML = !bulk ? ""
-      : !USER ? `${ICON.tag} <span><a href="login.html?next=${encodeURIComponent(location.pathname + location.search)}">Login / join as reseller</a> to pay <b>${money(v.bulkPrice)}</b> each for ${SITE.bulkMinQty}+ pcs</span>`
+      : !isRes() ? `${ICON.tag} <span>${resellerCta(location.pathname + location.search)} — approved resellers pay <b>${money(v.bulkPrice)}</b> each for ${SITE.bulkMinQty}+ pcs</span>`
       : !isBulk ? `${ICON.tag} Add 1 more and pay <b>${money(v.bulkPrice)}</b> per piece`
       : `${ICON.tag} Reseller price applied`;
     $("#oc-hint").className = "oc-hint" + (isBulk ? " ok" : "");
@@ -572,7 +576,7 @@ function initCart() {
     const subtotal = lines.reduce((a, l) => a + l.total, 0);
     const saved = lines.reduce((a, l) => a + l.saved, 0);
     // What a guest would save by joining as a reseller
-    const couldSave = USER ? 0 : lines.reduce((a, l) => a + (hasBulk(l.v) && l.qty >= SITE.bulkMinQty ? (l.v.price - l.v.bulkPrice) * l.qty : 0), 0);
+    const couldSave = isRes() ? 0 : lines.reduce((a, l) => a + (hasBulk(l.v) && l.qty >= SITE.bulkMinQty ? (l.v.price - l.v.bulkPrice) * l.qty : 0), 0);
     const next = encodeURIComponent("cart.html");
     root.innerHTML = `
       <div class="cart-grid">
@@ -585,7 +589,7 @@ function initCart() {
                 <span class="muted small">${esc(l.v.pkg)} – ${esc(l.v.duration)}</span>
                 <span class="small">${money(l.unit)} / piece
                   ${l.saved ? `<span class="tag tag-bulk">Reseller price</span>`
-                    : hasBulk(l.v) && !USER ? `<span class="muted"> · reseller 2+: ${money(l.v.bulkPrice)}</span>`
+                    : hasBulk(l.v) && !isRes() ? `<span class="muted"> · reseller 2+: ${money(l.v.bulkPrice)}</span>`
                     : hasBulk(l.v) ? `<span class="muted"> · add 1 more for ${money(l.v.bulkPrice)}</span>` : ""}
                 </span>
               </div>
@@ -603,11 +607,11 @@ function initCart() {
           <div class="sum-row"><span>Regular price</span><span>${money(subtotal + saved)}</span></div>
           ${saved ? `<div class="sum-row save"><span>Reseller discount</span><span>− ${money(saved)}</span></div>` : ""}
           <div class="sum-row total"><span>Total</span><strong>${money(subtotal)}</strong></div>
-          ${USER
+          ${isRes()
             ? `<div class="acct-note ok">${ICON.users}<span>Ordering as reseller <b>${esc(USER.username)}</b></span></div>`
-            : `<div class="acct-note">${ICON.tag}<span>Ordering as guest.${couldSave ? ` <b>Save ${money(couldSave)}</b> on this order —` : ""} <a href="login.html?next=${next}">Login / join as reseller</a> for 2+ prices.</span></div>`}
+            : `<div class="acct-note">${ICON.tag}<span>Ordering as ${USER ? `member <b>${esc(USER.username)}</b>` : "guest"}.${couldSave ? ` Resellers save <b>${money(couldSave)}</b> on this order —` : ""} ${resellerCta("cart.html")} for 2+ prices.</span></div>`}
           <form id="checkout-form">
-            ${payFields(!!USER)}
+            ${payFields(isRes())}
             <div class="form-error" id="form-error" hidden></div>
             <button class="btn btn-primary btn-block" type="submit" id="place-btn">Place order · ${money(subtotal)}</button>
           </form>
@@ -675,12 +679,6 @@ function initReseller() {
       <td class="muted">${esc(v.pkg)} – ${esc(v.duration)}</td>
       <td>${money(v.price)}</td><td class="hl">${money(v.bulkPrice)}</td>
       <td class="save">${Math.round((1 - v.bulkPrice / v.price) * 100)}%</td></tr>`; }).join("")}</tbody>`;
-  $("#reseller-form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const f = new FormData(e.target);
-    const msg = `Hi ${SITE.name}! I want to become a reseller.\n\nName: ${f.get("name")}\nWhatsApp: ${f.get("phone")}\nWhere I sell: ${f.get("channel")}\nExpected monthly orders: ${f.get("volume")}`;
-    window.open(waLink(msg), "_blank", "noopener");
-  });
 }
 
 /* ---------- Page: Order status / My orders ---------- */
@@ -811,6 +809,8 @@ function initAdmin() {
   const KEY = "pixelsub_admin_key";
   let filter = "all";
   let orderQuery = ""; // search box on the Orders page
+  let pendingApps = 0; // reseller applications waiting for approval (sidebar badge)
+  let userTab = "pending";
   const aoWarn = {};   // per-order "couldn't deliver" messages from the last save
   const normId = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
@@ -863,6 +863,8 @@ function initAdmin() {
     $$("[data-sec]", outer).forEach((b) => b.classList.toggle("active", b.dataset.sec === section));
     const badge = $('[data-badge="topups"]', outer);
     if (badge) { badge.textContent = pendingTopups || ""; badge.hidden = !pendingTopups; }
+    const ub = $('[data-badge="users"]', outer);
+    if (ub) { ub.textContent = pendingApps || ""; ub.hidden = !pendingApps; }
     const title = (SECTIONS.find(([k]) => k === section) || [])[1] || "";
     return `<div class="admin-head"><h1>${title}</h1><button class="btn btn-outline" id="reload">Reload</button></div>`;
   };
@@ -955,16 +957,44 @@ function initAdmin() {
     }));
   };
 
+  const TYPE_LABEL = { website: "Website / online store", bot: "Telegram / WhatsApp bot", other: "Facebook page / group / other" };
   const loadUsersView = async (users, pendingTopups) => {
-    root.innerHTML = sectionBar(pendingTopups) + (users.length ? `
-      <div class="card table-wrap"><table>
-        <thead><tr><th>Reseller</th><th>Email</th><th>Joined</th><th>Orders</th><th>Balance</th><th>Adjust balance</th></tr></thead>
-        <tbody>${users.map((u) => `<tr data-u="${esc(u.username)}">
-          <td><b>${esc(u.username)}</b></td><td>${u.email ? `${esc(u.email)}<br>${u.emailVerified ? '<span class="status s-delivered">Verified</span>' : '<span class="status s-pending">Not verified</span>'}` : '<span class="muted small">—</span>'}</td><td class="muted">${fmtDate(u.createdAt)}</td><td>${u.orders}</td>
-          <td><b class="amt-plus">${money(u.balance)}</b></td>
-          <td><div class="adj"><input type="number" step="1" placeholder="+500 or -200"><input type="text" placeholder="Note"><button class="btn btn-outline" data-adj>Apply</button></div></td>
-        </tr>`).join("")}</tbody></table></div>` : `<div class="empty card">No resellers yet.</div>`);
+    const groups = {
+      pending: users.filter((u) => u.status === "pending"),
+      approved: users.filter((u) => u.status === "approved"),
+      rejected: users.filter((u) => u.status === "rejected"),
+    };
+    const list = groups[userTab] || [];
+    const tabs = [["pending", "Pending"], ["approved", "Approved"], ["rejected", "Rejected"]];
+    const link = (a) => (/^https?:\/\//i.test(a.link) ? `<a href="${esc(a.link)}" target="_blank" rel="noopener nofollow">${esc(a.link)}</a>` : esc(a.link));
+    const appCell = (u) => u.application ? `<b>${esc(TYPE_LABEL[u.application.type] || u.application.type)}</b><br>${link(u.application)}${u.application.contact ? `<br><span class="muted small">Contact: ${esc(u.application.contact)}</span>` : ""}${u.application.note ? `<br><span class="muted small">${esc(u.application.note)}</span>` : ""}` : '<span class="muted small">— (older account)</span>';
+    root.innerHTML = sectionBar(pendingTopups) + `
+      <div class="tabs admin-tabs" style="margin-bottom:14px">${tabs.map(([k, l]) => `<button class="tab ${userTab === k ? "active" : ""}" data-ut="${k}">${l} (${groups[k].length})</button>`).join("")}</div>
+      ${list.length ? `<div class="card table-wrap"><table>
+        <thead><tr><th>Account</th><th>Where they sell</th><th>Applied</th><th>Orders</th><th>Balance</th><th></th></tr></thead>
+        <tbody>${list.map((u) => `<tr data-u="${esc(u.username)}">
+          <td><b>${esc(u.username)}</b><br><span class="muted small">joined ${fmtDate(u.createdAt)}</span></td>
+          <td>${appCell(u)}${u.application && u.application.rejectNote ? `<br><span class="bal-short small">Rejected: ${esc(u.application.rejectNote)}</span>` : ""}</td>
+          <td class="muted">${u.application ? fmtDate(u.application.submittedAt) : "—"}</td>
+          <td>${u.orders}</td><td><b class="amt-plus">${money(u.balance)}</b></td>
+          <td class="tu-actions">
+            ${u.status !== "approved" ? '<button class="btn btn-primary" data-rv="approve">Approve</button>' : ""}
+            ${u.status !== "rejected" ? `<button class="btn btn-outline" data-rv="reject">${u.status === "approved" ? "Revoke" : "Reject"}</button>` : ""}
+            ${u.status === "approved" ? `<div class="adj"><input type="number" step="0.01" placeholder="+5 or -2"><input type="text" placeholder="Note"><button class="btn btn-outline" data-adj>Balance</button></div>` : ""}
+          </td>
+        </tr>`).join("")}</tbody></table></div>` : `<div class="empty card">${userTab === "pending" ? "No applications waiting." : `No ${userTab} resellers.`}</div>`}`;
     bindBar();
+    $$("[data-ut]", root).forEach((b) => b.addEventListener("click", () => { userTab = b.dataset.ut; load(); }));
+    $$("[data-rv]", root).forEach((b) => b.addEventListener("click", async () => {
+      const u = b.closest("tr").dataset.u, action = b.dataset.rv;
+      let note = "";
+      if (action === "approve" && !confirm(`Approve ${u} as a reseller?`)) return;
+      if (action === "reject") { note = prompt(`Reason shown to ${u}:`, "Please send a working website or bot link"); if (note === null) return; }
+      const r = await api(`/api/admin/users/${encodeURIComponent(u)}/review`, { method: "POST", body: JSON.stringify({ action, note }) });
+      const d = await r.json().catch(() => ({}));
+      toast(r.ok ? (action === "approve" ? `${esc(u)} is now a reseller` : `${esc(u)} ${userTab === "approved" ? "revoked" : "rejected"}`) : esc(d.error || "Failed"));
+      load();
+    }));
     $$("[data-adj]", root).forEach((b) => b.addEventListener("click", async () => {
       const tr = b.closest("tr"), [amt, note] = $$("input", tr);
       if (!amt.value || !confirm(`Change ${tr.dataset.u}'s balance by ${amt.value}?`)) return;
@@ -974,12 +1004,13 @@ function initAdmin() {
       load();
     }));
   };
-
   const load = async () => {
     const tr = await api("/api/admin/topups");
     if (tr.status === 401) { sessionStorage.removeItem(KEY); return login("Wrong admin key."); }
     const topups = await tr.json();
     const pendingTopups = topups.filter((t) => t.status === "pending").length;
+    const allUsers = await (await api("/api/admin/users")).json().catch(() => []);
+    pendingApps = allUsers.filter((u) => u.status === "pending").length;
     shell();
     root = $("#admin-main");
     // Dashboard, Products and Settings live in admin.js
@@ -991,7 +1022,7 @@ function initAdmin() {
     }
     if (section === "topups") return loadTopupsView(topups);
     if (section === "stock") return loadStockView(pendingTopups);
-    if (section === "users") return loadUsersView(await (await api("/api/admin/users")).json(), pendingTopups);
+    if (section === "users") return loadUsersView(allUsers, pendingTopups);
     const r = await api("/api/admin/orders");
     const orders = await r.json();
     const counts = orders.reduce((a, o) => ((a[o.status] = (a[o.status] || 0) + 1), a), {});
@@ -1123,8 +1154,119 @@ function initAdmin() {
 window.initAdmin = initAdmin;
 
 /* ---------- Page: Reseller profile ---------- */
+/* ---------- Page: Profile of a member whose reseller application isn't approved (yet) ---------- */
+async function initApplicantAccount() {
+  const root = $("#account-root");
+  const TABS = [["status", "Application"], ["orders", "My orders"], ["settings", "Settings"]];
+  const TYPE_LABEL = { website: "Website / online store", bot: "Telegram / WhatsApp bot", other: "Facebook page / group / other" };
+  const PH = { website: "https://yourstore.com", bot: "https://t.me/yourbot  or  @yourbot", other: "https://facebook.com/yourpage" };
+  let orders = [];
+  const safeHref = (u) => (/^https?:\/\//i.test(u) ? u : "#");
+
+  const statusView = () => {
+    const a = USER.application, rej = USER.status === "rejected";
+    return `
+      <div class="card app-status ${rej ? "rej" : "pend"}">
+        <span class="status ${rej ? "s-cancelled" : "s-pending"}">${rej ? "Not approved" : "Under review"}</span>
+        <h3>${rej ? "Your application wasn't approved" : "Your reseller application is being reviewed"}</h3>
+        <p class="muted">${rej
+          ? "You can fix your details below and submit again."
+          : "The admin checks your website/bot link, then approves your account. Until then you can order at normal prices. We'll switch on reseller prices and your wallet as soon as you're approved — just come back to this page."}</p>
+        ${rej && a && a.rejectNote ? `<div class="form-error"><b>Reason:</b> ${esc(a.rejectNote)}</div>` : ""}
+      </div>
+      <div class="acc-two">
+        <div class="card acc-form">
+          <h3>Your application</h3>
+          ${a ? `
+            <div class="sum-row"><span>Type</span><b>${esc(TYPE_LABEL[a.type] || a.type)}</b></div>
+            <div class="sum-row"><span>Link</span><a href="${esc(safeHref(a.link))}" target="_blank" rel="noopener nofollow">${esc(a.link)}</a></div>
+            ${a.contact ? `<div class="sum-row"><span>Contact</span><span>${esc(a.contact)}</span></div>` : ""}
+            ${a.note ? `<div class="sum-row"><span>About</span><span>${esc(a.note)}</span></div>` : ""}
+            <div class="sum-row"><span>Submitted</span><span>${fmtDate(a.submittedAt)}</span></div>` : `<p class="muted">No application on file.</p>`}
+        </div>
+        <form class="card acc-form" id="apply-form">
+          <h3>${rej || !a ? "Submit again" : "Change your link"}</h3>
+          <label>Where do you sell?
+            <select name="type">${Object.entries(TYPE_LABEL).map(([k, l]) => `<option value="${k}" ${a && a.type === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+          <label>Website / bot / page link<input name="link" required maxlength="300" value="${esc(a ? a.link : "")}" placeholder="${PH[a ? a.type : "website"]}"></label>
+          <label>Telegram / WhatsApp (optional)<input name="contact" maxlength="80" value="${esc(a ? a.contact : "")}"></label>
+          <label>About your business (optional)<textarea name="note" rows="2" maxlength="500">${esc(a ? a.note : "")}</textarea></label>
+          <div class="form-error" id="apply-error" hidden></div>
+          <button class="btn btn-primary btn-block">${rej ? "Submit application again" : "Update application"}</button>
+        </form>
+      </div>`;
+  };
+
+  const ordersView = () => orders.length ? `<div class="card cart-list">${orders.map((o) => `
+    <a class="cart-line my-order" href="order.html?id=${encodeURIComponent(o.id)}&t=${encodeURIComponent(o.token)}">
+      <div class="cl-info"><b>${esc(o.id)}</b><span class="muted small">${fmtDate(o.createdAt)} · ${o.items.map((i) => esc(i.name) + " ×" + i.qty).join(", ")}</span></div>
+      <span class="status ${o.waitingAdmin ? "s-pending" : "s-" + o.status}">${statusText(o)}</span>
+      <strong class="cl-total">${money(o.total)}</strong>
+    </a>`).join("")}</div>` : `<div class="empty card"><h2>No orders yet</h2><a class="btn btn-primary" href="index.html#products">Browse products</a></div>`;
+
+  const settingsView = () => `
+    <div class="acc-two">
+      <form class="card acc-form" id="pw-form">
+        <h3>Change password</h3>
+        <label>Current password<input name="current" type="password" required autocomplete="current-password"></label>
+        <label>New password<input name="next" type="password" required minlength="6" autocomplete="new-password"></label>
+        <label>Confirm new password<input name="next2" type="password" required minlength="6" autocomplete="new-password"></label>
+        <div class="form-error" id="pw-error" hidden></div>
+        <button class="btn btn-primary btn-block">Update password</button>
+      </form>
+      <div class="card acc-form">
+        <h3>Account</h3>
+        <div class="sum-row"><span>Username</span><b>${esc(USER.username)}</b></div>
+        <div class="sum-row"><span>Account type</span><span class="status s-pending">Member</span></div>
+        <div class="sum-row"><span>Member since</span><span>${fmtDate(USER.createdAt)}</span></div>
+        <button class="btn btn-outline btn-block" id="acc-logout">Log out</button>
+      </div>
+    </div>`;
+
+  const views = { status: statusView, orders: ordersView, settings: settingsView };
+  const render = () => {
+    const tab = TABS.some(([k]) => "#" + k === location.hash) ? location.hash.slice(1) : "status";
+    root.innerHTML = `
+      <div class="acc-head">
+        <div><span class="eyebrow">Member profile</span><h1 class="page-title">${esc(USER.username)}</h1></div>
+        <div class="acc-bal"><small>Reseller status</small><b class="${USER.status === "rejected" ? "amt-minus" : ""}" style="color:${USER.status === "rejected" ? "var(--red)" : "#b45309"}">${USER.status === "rejected" ? "Not approved" : "Pending"}</b></div>
+      </div>
+      <div class="tabs acc-tabs">${TABS.map(([k, l]) => `<a class="tab ${k === tab ? "active" : ""}" href="#${k}">${l}</a>`).join("")}</div>
+      <div id="acc-view">${views[tab]()}</div>`;
+    const af = $("#apply-form");
+    if (af) {
+      af.type.addEventListener("change", () => (af.link.placeholder = PH[af.type.value]));
+      af.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const err = $("#apply-error"); err.hidden = true;
+        const r = await fetch("/api/auth/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Object.fromEntries(new FormData(af))) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { err.textContent = d.error || "Could not submit."; err.hidden = false; return; }
+        USER = d; toast("Application submitted"); render();
+      });
+    }
+    const lo = $("#acc-logout");
+    if (lo) lo.addEventListener("click", async () => { await fetch("/api/auth/logout", { method: "POST" }); location.href = "index.html"; });
+    const pf = $("#pw-form");
+    if (pf) pf.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const f = new FormData(pf), err = $("#pw-error"); err.hidden = true;
+      if (f.get("next") !== f.get("next2")) { err.textContent = "New passwords don't match."; err.hidden = false; return; }
+      const r = await fetch("/api/auth/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ current: f.get("current"), next: f.get("next") }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { err.textContent = d.error || "Could not update."; err.hidden = false; return; }
+      pf.reset(); toast("Password updated");
+    });
+  };
+
+  const r = await fetch("/api/my/orders");
+  orders = r.ok ? await r.json() : [];
+  render();
+  window.addEventListener("hashchange", render);
+}
 async function initAccount() {
   if (!USER) { location.replace("login.html?next=" + encodeURIComponent("account.html" + location.hash)); return; }
+  if (!USER.reseller) return initApplicantAccount();
   const root = $("#account-root");
   const TABS = [["overview", "Overview"], ["add", "Add balance"], ["orders", "My orders"], ["history", "Balance history"], ["settings", "Settings"]];
   let W = null, orders = [];
@@ -1134,7 +1276,7 @@ async function initAccount() {
   const load = async () => {
     const [w, o] = await Promise.all([fetch("/api/wallet").then((r) => r.json()), fetch("/api/my/orders").then((r) => r.json())]);
     W = w; orders = o; USER.balance = w.balance;
-    $$(".nav-user b").forEach((b) => (b.textContent = money(w.balance)));
+    $$(".nav-user b:not(.pend)").forEach((b) => (b.textContent = money(w.balance)));
   };
 
   const orderRows = (list) => list.length ? list.map((o) => `
@@ -1286,38 +1428,60 @@ function initLogin() {
   const next = /^[a-z]+\.html([?#].*)?$|^\/[a-z]+\.html([?#].*)?$/i.test(qs.get("next") || "") ? qs.get("next") : "index.html";
   if (USER) { location.replace(next); return; }
   let mode = qs.get("mode") === "join" ? "join" : "login";
+  let storeType = "website";
   const root = $("#login-root");
 
+  const typeHelp = {
+    website: { label: "Your website / store link", ph: "https://yourstore.com", hint: "A page where you sell (or will sell) these products." },
+    bot: { label: "Your bot link", ph: "https://t.me/yourbot  or  @yourbot", hint: "The Telegram or WhatsApp bot your customers buy from." },
+    other: { label: "Your page / group link", ph: "https://facebook.com/yourpage", hint: "Facebook page, group, marketplace shop or channel where you sell." },
+  };
+
   const render = () => {
+    const h = typeHelp[storeType];
     root.innerHTML = `
       <div class="auth-grid">
         <div class="card auth-card">
           <div class="tabs auth-tabs">
             <button class="tab ${mode === "login" ? "active" : ""}" data-m="login">Login</button>
-            <button class="tab ${mode === "join" ? "active" : ""}" data-m="join">Join as reseller</button>
+            <button class="tab ${mode === "join" ? "active" : ""}" data-m="join">Apply as reseller</button>
           </div>
           <form id="auth-form">
             <label>Username<input name="username" required minlength="3" maxlength="30" pattern="[A-Za-z0-9_.]{3,30}" autocomplete="username" placeholder="e.g. rahim_store"></label>
-            ${mode === "join" ? `<label>Email<input name="email" type="email" required maxlength="120" autocomplete="email" placeholder="you@gmail.com"></label>` : ""}
             <label>Password<input name="password" type="password" required minlength="6" autocomplete="${mode === "join" ? "new-password" : "current-password"}" placeholder="${mode === "join" ? "At least 6 characters" : ""}"></label>
-            ${mode === "join" ? `<label>Confirm password<input name="password2" type="password" required minlength="6" autocomplete="new-password"></label>` : ""}
+            ${mode === "join" ? `
+              <label>Confirm password<input name="password2" type="password" required minlength="6" autocomplete="new-password"></label>
+              <label>Where do you sell?
+                <select name="type" id="store-type">${Object.entries({ website: "Website / online store", bot: "Telegram / WhatsApp bot", other: "Facebook page / group / other" }).map(([k, l]) => `<option value="${k}" ${k === storeType ? "selected" : ""}>${l}</option>`).join("")}</select>
+              </label>
+              <label>${h.label}<input name="link" required maxlength="300" placeholder="${h.ph}" autocomplete="off"><small class="muted">${h.hint} Required — we check it before approving.</small></label>
+              <label>Telegram / WhatsApp to reach you (optional)<input name="contact" maxlength="80" placeholder="@yourname or +8801…"></label>
+              <label>About your business (optional)<textarea name="note" rows="2" maxlength="500" placeholder="How many customers, what you sell…"></textarea></label>` : ""}
             <div class="form-error" id="auth-error" hidden></div>
-            <button class="btn btn-primary btn-block" id="auth-btn">${mode === "join" ? "Create reseller account" : "Login"}</button>
+            <button class="btn btn-primary btn-block" id="auth-btn">${mode === "join" ? "Submit application" : "Login"}</button>
           </form>
-          <p class="muted small">${mode === "join" ? "Free. We'll email you a 6-digit code to confirm your address." : `No account? <a href="#" data-m="join">Join as reseller</a> — it's free.`}</p>
+          <p class="muted small">${mode === "join" ? "Free. The admin reviews your application; you get the reseller price and wallet once approved." : `New here? <a href="#" data-m="join">Apply as reseller</a>.`}</p>
         </div>
         <div class="auth-side">
-          <span class="eyebrow">Why join?</span>
-          <h2>Reseller price from 2 pcs</h2>
+          <span class="eyebrow">Reseller program</span>
+          <h2>Reseller price from ${SITE.bulkMinQty} pcs</h2>
           <ul class="auth-perks">
             <li>${ICON.tag} Pay the lower reseller price on every product when you buy ${SITE.bulkMinQty}+</li>
-            <li>${ICON.box} All your orders and account details in one place</li>
+            <li>${ICON.wallet} Reseller wallet: top up and pay instantly</li>
             <li>${ICON.shield} Same warranty for your customers</li>
           </ul>
-          <p class="muted small">Just buying for yourself? You can <a href="cart.html">order as a guest</a> without an account.</p>
+          <p class="muted small"><b>How it works:</b> 1) apply with your website or bot link, 2) the admin checks it, 3) you're approved and can start buying at reseller prices. Just buying for yourself? <a href="cart.html">Order as a guest</a> — no account needed.</p>
         </div>
       </div>`;
     $$("[data-m]", root).forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); mode = b.dataset.m; render(); }));
+    const sel = $("#store-type");
+    if (sel) sel.addEventListener("change", () => {
+      // keep what was typed while switching the wording
+      const keep = Object.fromEntries(new FormData($("#auth-form")));
+      storeType = sel.value; render();
+      const f = $("#auth-form");
+      for (const k of ["username", "password", "password2", "link", "contact", "note"]) if (f[k] && keep[k] !== undefined) f[k].value = keep[k];
+    });
     $("#auth-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const f = new FormData(e.target), err = $("#auth-error"), btn = $("#auth-btn");
@@ -1327,56 +1491,15 @@ function initLogin() {
       const r = await fetch(`/api/auth/${mode === "join" ? "signup" : "login"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: f.get("username"), email: f.get("email"), password: f.get("password") }),
+        body: JSON.stringify(Object.fromEntries(f)),
       });
       const d = await r.json().catch(() => ({}));
-      if (d.needsVerify) return renderVerify(d.username, d.email, r.ok); // new sign-up, or login before verifying
-      if (r.ok) return location.replace(next);
+      if (r.ok) return location.replace(mode === "join" ? "account.html#status" : (d.reseller ? next : "account.html#status"));
       err.textContent = d.error || "Something went wrong."; err.hidden = false; btn.disabled = false;
     });
   };
-
-  // Step 2: type the 6-digit code that was emailed
-  const renderVerify = (username, maskedEmail, fresh) => {
-    root.innerHTML = `
-      <div class="auth-grid">
-        <div class="card auth-card">
-          <h3>Check your email</h3>
-          <p>${fresh ? "We sent" : "Your email isn't verified yet. We sent"} a 6-digit code to <b>${esc(maskedEmail)}</b>. It expires in 15 minutes.</p>
-          <form id="verify-form">
-            <label>Verification code<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required placeholder="123456" class="code-input" autofocus></label>
-            <div class="form-error" id="auth-error" hidden></div>
-            <button class="btn btn-primary btn-block" id="auth-btn">Verify & continue</button>
-          </form>
-          <p class="muted small">Didn't get it? Check spam, or <a href="#" id="resend">send a new code</a>. <a href="#" id="back">Use another email</a></p>
-        </div>
-        <div class="auth-side">
-          <span class="eyebrow">Almost there</span>
-          <h2>Confirm your email</h2>
-          <p class="muted">This keeps reseller accounts real and lets you recover your account later.</p>
-        </div>
-      </div>`;
-    const err = $("#auth-error"), show = (m) => { err.textContent = m; err.hidden = false; };
-    $("#verify-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      err.hidden = true;
-      const btn = $("#auth-btn"); btn.disabled = true;
-      const r = await fetch("/api/auth/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, code: e.target.code.value }) });
-      const d = await r.json().catch(() => ({}));
-      if (r.ok) return location.replace(next);
-      show(d.error || "Could not verify."); btn.disabled = false;
-    });
-    $("#resend").addEventListener("click", async (e) => {
-      e.preventDefault();
-      const r = await fetch("/api/auth/resend", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username }) });
-      const d = await r.json().catch(() => ({}));
-      if (r.ok) { err.hidden = true; toast("New code sent"); } else show(d.error || "Could not send a new code.");
-    });
-    $("#back").addEventListener("click", (e) => { e.preventDefault(); mode = "join"; render(); });
-  };
   render();
 }
-
 /* ---------- Boot ---------- */
 document.addEventListener("DOMContentLoaded", async () => {
   try {
