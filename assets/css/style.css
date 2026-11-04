@@ -72,8 +72,7 @@ h1, h2, h3, h4 { color: var(--ink); line-height: 1.2; letter-spacing: -.02em; }
 .nav { display: flex; align-items: center; gap: 18px; height: 68px; }
 .logo { display: flex; align-items: center; gap: 9px; flex-shrink: 0; }
 .logo-mark {
-  width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
-  background: linear-gradient(135deg, #3b82f6, #1d4ed8); color: #fff; font-weight: 800; font-size: 13px;
+  width: 34px; height: 34px; border-radius: 9px; display: block; object-fit: cover;
   box-shadow: 0 4px 10px rgba(37,99,235,.3);
 }
 .logo-text { font-weight: 800; font-size: 17px; color: var(--ink); letter-spacing: .02em; }

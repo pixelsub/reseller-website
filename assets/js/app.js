@@ -205,7 +205,7 @@ function renderHeader() {
   el.innerHTML = `
     <div class="container nav">
       <a class="logo" href="index.html" aria-label="${SITE.name} home">
-        <span class="logo-mark">PS</span><span class="logo-text">PIXEL<b>SUB</b></span>
+        <img class="logo-mark" src="assets/img/logo.png" alt=""><span class="logo-text">PIXEL<b>SUB</b></span>
       </a>
       <form class="nav-search" role="search" action="index.html#products">
         ${ICON.search}<input type="search" name="q" placeholder="Search a product" autocomplete="off" aria-label="Search a product">
@@ -248,7 +248,7 @@ function renderFooter() {
   el.innerHTML = `
     <div class="container footer-grid">
       <div>
-        <a class="logo" href="index.html"><span class="logo-mark">PS</span><span class="logo-text">PIXEL<b>SUB</b></span></a>
+        <a class="logo" href="index.html"><img class="logo-mark" src="assets/img/logo.png" alt=""><span class="logo-text">PIXEL<b>SUB</b></span></a>
         <p class="muted">Original premium accounts at reseller-friendly prices. Buy 1 for yourself, or buy 2+ and save on every piece.</p>
       </div>
       <div>
@@ -818,7 +818,7 @@ function initAdmin() {
     root = outer;
     outer.innerHTML = `
       <form class="card admin-login" id="admin-login">
-        <div class="logo"><span class="logo-mark">PS</span><span class="logo-text">PIXEL<b>SUB</b> <small class="muted">Admin</small></span></div>
+        <div class="logo"><img class="logo-mark" src="assets/img/logo.png" alt=""><span class="logo-text">PIXEL<b>SUB</b> <small class="muted">Admin</small></span></div>
         <label>Admin key<input type="password" name="key" required autocomplete="current-password"></label>
         ${msg ? `<div class="form-error">${esc(msg)}</div>` : ""}
         <button class="btn btn-primary btn-block">Log in</button>
@@ -845,7 +845,7 @@ function initAdmin() {
     outer.innerHTML = `
       <div class="admin-layout">
         <aside class="admin-side">
-          <a class="logo" href="index.html" target="_blank" rel="noopener"><span class="logo-mark">PS</span><span class="logo-text">PIXEL<b>SUB</b></span></a>
+          <a class="logo" href="index.html" target="_blank" rel="noopener"><img class="logo-mark" src="assets/img/logo.png" alt=""><span class="logo-text">PIXEL<b>SUB</b></span></a>
           <nav>${SECTIONS.map(([k, l, ic]) => `<button data-sec="${k}">${ic}<span>${l}</span><em class="badge-n" data-badge="${k}" hidden></em></button>`).join("")}</nav>
           <div class="admin-side-foot">
             <a class="btn btn-outline btn-block" href="index.html" target="_blank" rel="noopener">View site</a>
