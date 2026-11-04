@@ -19,8 +19,8 @@ const SITE = {
   domain: "pixelsub.shop",
   currency: "$",
   bulkMinQty: 2,                    // quantity from which bulkPrice applies
-  whatsapp: "8801700000000",        // WhatsApp number, country code, no + or spaces
-  telegram: "pixelsub",             // Telegram username without @
+  whatsapp: "8801857234526",        // WhatsApp number, country code, no + or spaces
+  telegram: "pixelsub09",           // Telegram username without @
   email: "support@pixelsub.shop",
   hours: "10:00 AM – 12:00 AM (GMT+6)",
   payments: ["Binance Pay", "Bybit", "Cryptomus"],
@@ -30,8 +30,8 @@ const SITE = {
   //   provider "binance" / "bybit": customer sends USDT to the ID below, then enters the transfer ID -> checked via API
   //   provider "cryptomus": customer is sent to a Cryptomus invoice page and can pay with any crypto -> confirmed by webhook
   paymentInfo: {
-    "Binance Pay": { label: "Binance Pay ID", value: "000000000", provider: "binance" },
-    "Bybit":       { label: "Bybit UID", value: "000000000", provider: "bybit" },
+    "Binance Pay": { label: "Binance Pay ID", value: "1067913841", provider: "binance" },
+    "Bybit":       { label: "Bybit UID", value: "516771587", provider: "bybit" },
     "Cryptomus":   { provider: "cryptomus", redirect: true },
   },
 };

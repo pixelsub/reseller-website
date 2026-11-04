@@ -221,11 +221,24 @@ function seedCatalog() {
   return JSON.parse(JSON.stringify(ctx.__cat));
 }
 
+// A saved catalogue made before the real contact / payment IDs were in data.js still holds the
+// placeholders; take those from data.js. Anything set in admin Settings is kept as is.
+const PLACEHOLDERS = { whatsapp: "8801700000000", telegram: "pixelsub", payId: "000000000" };
+function fillPlaceholders(data) {
+  const S = data.SITE || {}, D = seedCatalog().SITE;
+  for (const k of ["whatsapp", "telegram"]) if (!S[k] || S[k] === PLACEHOLDERS[k]) S[k] = D[k];
+  for (const [m, info] of Object.entries(S.paymentInfo || {})) {
+    const def = (D.paymentInfo || {})[m];
+    if (def && "value" in info && (!info.value || info.value === PLACEHOLDERS.payId)) info.value = def.value;
+  }
+  return data;
+}
+
 function catalog() {
   let mtime = 0;
   try { mtime = fs.statSync(catalogFile).mtimeMs; } catch { mtime = 0; }
   if (catCache.data && catCache.mtime === mtime) return catCache.data;
-  const data = mtime ? JSON.parse(fs.readFileSync(catalogFile, "utf8")) : seedCatalog();
+  const data = mtime ? fillPlaceholders(JSON.parse(fs.readFileSync(catalogFile, "utf8"))) : seedCatalog();
   catCache = { mtime, data };
   return data;
 }
