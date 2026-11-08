@@ -490,7 +490,9 @@ function initProduct() {
         <div class="pd-badges" id="pd-badges"></div>
 
         <div class="tier-box" id="tier-box"></div>
+      </div>
 
+      <div class="pd-terms">
         <h5 class="label">Read before you buy</h5>
         <div class="terms card">
           <h4>${ICON.shield} Product terms</h4>
