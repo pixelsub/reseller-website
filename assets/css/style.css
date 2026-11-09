@@ -648,3 +648,28 @@ tr:last-child td { border-bottom: 0; }
 @media (max-width: 520px) {
   .features, .steps, .perks, .footer-grid, .pd-selects, .tier-box, .bulk-demo { grid-template-columns: 1fr; }
 }
+
+/* ---------- Motion ---------- */
+.motion .rv { opacity: 0; transform: translateY(22px) scale(.985); transition: opacity .6s cubic-bezier(.22,1,.36,1) var(--d, 0ms), transform .6s cubic-bezier(.22,1,.36,1) var(--d, 0ms); will-change: opacity, transform; }
+.motion .rv.in { opacity: 1; transform: none; will-change: auto; }
+.motion .product-card.rv.in { transition: opacity .6s cubic-bezier(.22,1,.36,1) var(--d, 0ms), transform .25s ease, box-shadow .25s ease; }
+/* hero text slides in on load and on every slide change */
+.hero-slide.active .eyebrow, .hero-slide.active h1, .hero-slide.active p, .hero-slide.active .hero-actions { animation: rise .7s cubic-bezier(.22,1,.36,1) both; }
+.hero-slide.active h1 { animation-delay: .08s; }
+.hero-slide.active p { animation-delay: .16s; }
+.hero-slide.active .hero-actions { animation-delay: .24s; }
+@keyframes rise { from { opacity: 0; transform: translateY(18px); } }
+/* buttons: lift on hover, press on click, soft light sweep on primary */
+.btn { transition: transform .2s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease, color .2s ease; }
+.btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 18px rgba(37, 99, 235, .18); }
+.btn:active:not(:disabled) { transform: translateY(0) scale(.97); box-shadow: none; }
+.btn-primary, .btn-buy { position: relative; overflow: hidden; }
+.btn-primary::after, .btn-buy::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(105deg, transparent 35%, rgba(255,255,255,.28) 50%, transparent 65%); transform: translateX(-120%); }
+.btn-primary:hover:not(:disabled)::after, .btn-buy:hover:not(:disabled)::after { transform: translateX(120%); transition: transform .7s ease; }
+.feature, .step { transition: transform .25s ease, box-shadow .25s ease; }
+.feature:hover, .step:hover { transform: translateY(-4px); box-shadow: 0 14px 30px rgba(15, 23, 42, .09); }
+#site-header { transition: box-shadow .3s ease; }
+#site-header.scrolled { box-shadow: 0 6px 20px rgba(15, 23, 42, .07); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}

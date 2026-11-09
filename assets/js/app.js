@@ -1586,7 +1586,36 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderHeader();
   renderFooter();
   updateCartBadge();
+  initMotion();
   const page = document.body.dataset.page;
   ({ home: initHome, product: initProduct, cart: initCart, reseller: initReseller, order: initOrder, admin: initAdmin, login: initLogin, account: initAccount })[page]?.();
 });
 window.addEventListener("storage", updateCartBadge);
+
+/* ---------- Motion: scroll-reveal + micro-interactions (skipped for reduced-motion users and the admin page) ---------- */
+function initMotion() {
+  if (document.body.dataset.page === "admin") return;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches || !("IntersectionObserver" in window)) return;
+  document.documentElement.classList.add("motion");
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+  }, { threshold: 0.12, rootMargin: "0px 0px -6% 0px" });
+  const SEL = ".section-head, .product-card, .feature, .step, .bulk-banner, .faq > *, .perk, .tier, .footer-grid > *";
+  const seen = new WeakSet();
+  const scan = () => {
+    let i = 0;
+    document.querySelectorAll(SEL).forEach((el) => {
+      if (seen.has(el)) return;
+      seen.add(el);
+      el.classList.add("rv");
+      el.style.setProperty("--d", `${(i++ % 8) * 60}ms`); // stagger siblings that appear together
+      io.observe(el);
+    });
+  };
+  scan();
+  // Product grid / tabs / search re-render their cards: reveal the new ones too
+  new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
+  // Header gets a soft shadow once the page is scrolled
+  const hdr = document.querySelector("#site-header");
+  if (hdr) addEventListener("scroll", () => hdr.classList.toggle("scrolled", scrollY > 8), { passive: true });
+}
