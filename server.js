@@ -811,9 +811,7 @@ async function createOrder(req, res) {
   const info = (SITE.paymentInfo || {})[payment.method] || {};
   if (!useBalance && !info.redirect && !payment.trx) return send(res, 400, { error: "Transaction ID is required." });
   if (useBalance || info.redirect) { payment.trx = ""; payment.sender = ""; }
-  const needProof = !useBalance && PROOF_PROVIDERS.includes(info.provider);
-  if (needProof) payment.sender = "";
-  if (needProof && !body.proof) return send(res, 400, { error: "Please upload a screenshot of your payment." });
+  if (PROOF_PROVIDERS.includes(info.provider)) payment.sender = ""; // Binance: the Order ID alone is enough
   if (!Array.isArray(body.items) || !body.items.length || body.items.length > 50) return send(res, 400, { error: "Your cart is empty." });
 
   // Prices are always recalculated here; the browser's numbers are never trusted.
@@ -845,9 +843,6 @@ async function createOrder(req, res) {
 
   if (payment.trx && trxUsed(payment.trx)) {
     return send(res, 400, { error: "This Transaction ID was already used." });
-  }
-  if (needProof) {
-    try { payment.proof = saveProof(body.proof); } catch (e) { return send(res, 400, { error: e.message }); }
   }
   const order = {
     id: newOrderId(),
@@ -998,10 +993,7 @@ async function createTopup(req, res) {
   if (info.redirect) { payment.trx = ""; payment.sender = ""; }
   else if (!payment.trx) return send(res, 400, { error: "Transaction ID is required." });
   if (payment.trx && trxUsed(payment.trx)) return send(res, 400, { error: "This Transaction ID was already used." });
-  if (PROOF_PROVIDERS.includes(info.provider)) {
-    payment.sender = "";
-    try { payment.proof = saveProof(body.proof); } catch (e) { return send(res, 400, { error: e.message }); }
-  }
+  if (PROOF_PROVIDERS.includes(info.provider)) payment.sender = "";
   if (info.provider) {
     payment.auto = true;
     payment.provider = info.provider;

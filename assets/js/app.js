@@ -59,8 +59,8 @@ const Cart = {
 
 /* Per-provider wording for the payment form */
 const PROVIDER_TEXT = {
-  binance: { name: "Binance", idLabel: "Binance Order ID", idPh: "e.g. 312345678901234567", proof: true,
-             how: "Open Binance → Pay → Send, enter the Pay ID and the exact USDT amount. Then paste the Order ID and upload a screenshot of the payment below — it's checked automatically." },
+  binance: { name: "Binance", idLabel: "Binance Order ID", idPh: "e.g. 312345678901234567", noSender: true,
+             how: "Open Binance → Pay → Send, enter the Pay ID and the exact USDT amount. Then paste the Order ID below — it's checked automatically." },
   bybit:   { name: "Bybit", idLabel: "Bybit Transfer ID", idPh: "Transaction ID from Bybit", fromLabel: "Your Bybit UID / email", fromPh: "UID you sent from",
              how: "Open Bybit → Assets → Transfer → Send to Bybit user (UID), coin USDT, exact amount. Then paste the transfer ID below — it's checked automatically." },
 };
@@ -134,12 +134,11 @@ function bindPayForm(form, getAmount, onChange) {
     const bal = m === "Balance";
     const info = (SITE.paymentInfo || {})[m] || {};
     const noTrx = bal || info.redirect;
-    const proof = !noTrx && !!(PROVIDER_TEXT[info.provider] || {}).proof;
+    const noSender = !noTrx && !!(PROVIDER_TEXT[info.provider] || {}).noSender;
     $$(".ext-field", form).forEach((l) => (l.hidden = noTrx));
-    $(".f-sender", form).hidden = noTrx || proof;
-    $(".f-proof", form).hidden = !proof;
+    $(".f-sender", form).hidden = noTrx || noSender;
+    $(".f-proof", form).hidden = true; // screenshots are no longer asked for
     form.trx.required = !noTrx;
-    form.proof.required = proof;
     if (bal) {
       const short = USER.balance < total;
       box.innerHTML = `<div class="pay-title">Pay from <b>balance</b></div>
