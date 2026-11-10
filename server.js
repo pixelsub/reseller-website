@@ -1652,9 +1652,111 @@ async function api(req, res, url) {
 /* ---------- Static files ---------- */
 const BLOCKED = /^\/(storage|server\.js|\.claude|node_modules|\.env[^/]*|tests?)(\/|$)/i;
 
+/* ---------- SEO: robots.txt, sitemap.xml, per-page meta tags + structured data ---------- */
+const escAttr = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const jsonLd = (o) => `<script type="application/ld+json">${JSON.stringify(o).replace(/</g, "\\u003c")}</script>`;
+const absUrl = (base, p) => (/^https?:/i.test(p || "") ? p : `${base}/${String(p || "").replace(/^\//, "")}`);
+
+function robotsTxt(base) {
+  return `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /admin\nDisallow: /account\nDisallow: /order\nDisallow: /cart\nDisallow: /login\n\nSitemap: ${base}/sitemap.xml\n`;
+}
+
+function sitemapXml(base) {
+  const { PRODUCTS } = catalog();
+  const day = new Date().toISOString().slice(0, 10);
+  const urls = [
+    { loc: `${base}/`, pr: "1.0", cf: "daily" },
+    { loc: `${base}/reseller.html`, pr: "0.7", cf: "weekly" },
+    ...PRODUCTS.map((p) => ({ loc: `${base}/product.html?p=${encodeURIComponent(p.slug)}`, pr: "0.8", cf: "daily" })),
+  ];
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+    urls.map((u) => `  <url><loc>${escAttr(u.loc)}</loc><lastmod>${day}</lastmod><changefreq>${u.cf}</changefreq><priority>${u.pr}</priority></url>`).join("\n") + `\n</urlset>\n`;
+}
+
+// Returns the <head> tags (title/description/canonical/Open Graph/Twitter/JSON-LD) for a public page, or null.
+function seoHead(file, url, base) {
+  const { SITE, PRODUCTS } = liveCatalog();
+  const name = SITE.name || "PixelSub";
+  const logo = absUrl(base, "assets/img/logo.png");
+  const mk = ({ title, desc, canon, image, type = "website", extra = "" }) =>
+    `<title>${escAttr(title)}</title>\n  <meta name="description" content="${escAttr(desc)}">\n  <link rel="canonical" href="${escAttr(canon)}">\n` +
+    `  <meta name="robots" content="index, follow, max-image-preview:large">\n  <meta name="theme-color" content="#2563eb">\n` +
+    `  <meta property="og:site_name" content="${escAttr(name)}">\n  <meta property="og:type" content="${type}">\n  <meta property="og:title" content="${escAttr(title)}">\n` +
+    `  <meta property="og:description" content="${escAttr(desc)}">\n  <meta property="og:url" content="${escAttr(canon)}">\n  <meta property="og:image" content="${escAttr(image || logo)}">\n` +
+    `  <meta name="twitter:card" content="summary_large_image">\n  <meta name="twitter:title" content="${escAttr(title)}">\n  <meta name="twitter:description" content="${escAttr(desc)}">\n  <meta name="twitter:image" content="${escAttr(image || logo)}">\n  ${extra}`;
+
+  if (file === "index.html") {
+    const names = PRODUCTS.slice(0, 8).map((p) => p.name).join(", ");
+    return mk({
+      title: `${name} | Buy Netflix, ChatGPT, CapCut, Canva & Premium Accounts Cheap`,
+      desc: `Buy original premium accounts at reseller prices: ${names} and more. Instant delivery 24/7, replacement warranty, pay with Binance Pay, Bybit or crypto.`,
+      canon: `${base}/`,
+      extra: jsonLd({ "@context": "https://schema.org", "@graph": [
+        { "@type": "Organization", "@id": `${base}/#org`, name, url: `${base}/`, logo, ...(SITE.email ? { email: SITE.email } : {}) },
+        { "@type": "WebSite", "@id": `${base}/#site`, name, url: `${base}/`, publisher: { "@id": `${base}/#org` } },
+      ] }),
+    });
+  }
+  if (file === "reseller.html") {
+    return mk({
+      title: `Become a Reseller | Wholesale Premium Account Prices | ${name}`,
+      desc: `Join the ${name} reseller program and buy premium accounts for less when you take 2 or more. Wholesale prices on Netflix, ChatGPT, CapCut, Canva and more.`,
+      canon: `${base}/reseller.html`,
+    });
+  }
+  if (file === "product.html") {
+    const p = PRODUCTS.find((x) => x.slug === url.searchParams.get("p"));
+    if (!p) return null;
+    const prices = p.variants.map((v) => v.price).filter((n) => typeof n === "number" && n > 0);
+    const low = prices.length ? Math.min(...prices) : null, high = prices.length ? Math.max(...prices) : null;
+    const inStock = p.variants.some((v) => (v.stock || 0) > 0);
+    const canon = `${base}/product.html?p=${encodeURIComponent(p.slug)}`;
+    const image = p.image ? absUrl(base, p.image) : logo;
+    const desc = `Buy ${p.name}${low != null ? ` from $${low}` : ""} — ${p.short || `original ${p.category} account`} Instant delivery, replacement warranty. Pay with Binance Pay, Bybit or crypto.`.slice(0, 300);
+    const offer = low != null ? {
+      "@type": "AggregateOffer", priceCurrency: "USD", lowPrice: low, highPrice: high, offerCount: p.variants.length,
+      availability: inStock ? "https://schema.org/InStock" : "https://schema.org/OutOfStock", url: canon,
+    } : undefined;
+    return mk({
+      title: `Buy ${p.name}${low != null ? ` from $${low}` : ""} | ${name}`, desc, canon, image, type: "product",
+      extra: jsonLd({ "@context": "https://schema.org", "@type": "Product", name: p.name, description: p.short || p.name, image, category: p.category,
+        brand: { "@type": "Brand", name: p.name }, ...(offer ? { offers: offer } : {}) }) + "\n  " + jsonLd({ "@context": "https://schema.org", "@type": "BreadcrumbList", itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Home", item: `${base}/` },
+        { "@type": "ListItem", position: 2, name: p.name, item: canon } ] }),
+    });
+  }
+  return null;
+}
+
+// Crawlable fallback: plain links to every product (the product grid itself is drawn by JavaScript)
+function seoNoscript(base) {
+  const { PRODUCTS } = catalog();
+  return `<noscript><nav aria-label="Products"><ul>${PRODUCTS.map((p) => `<li><a href="${base}/product.html?p=${encodeURIComponent(p.slug)}">${escAttr(p.name)}</a> — ${escAttr(p.short || p.category)}</li>`).join("")}</ul></nav></noscript>`;
+}
+
+function serveHtml(req, res, file, url) {
+  fs.readFile(path.join(root, file), "utf8", (err, html) => {
+    if (err) { res.writeHead(404); return res.end("Not found"); }
+    const base = publicBase(req);
+    const head = seoHead(file, url, base);
+    if (head) {
+      html = html.replace(/<title>[\s\S]*?<\/title>\s*/i, "").replace(/<meta name="description"[^>]*>\s*/i, "").replace("</head>", `  ${head}\n</head>`);
+      if (file === "index.html") html = html.replace('<header id="site-header"></header>', `<header id="site-header"></header>\n  ${seoNoscript(base)}`);
+    }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
+    res.end(html);
+  });
+}
+
 function serveStatic(req, res, url) {
   let p = decodeURIComponent(url.pathname);
   if (BLOCKED.test(p)) { res.writeHead(404); return res.end("Not found"); }
+  if (p === "/robots.txt") { res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" }); return res.end(robotsTxt(publicBase(req))); }
+  if (p === "/sitemap.xml") { res.writeHead(200, { "Content-Type": "application/xml; charset=utf-8" }); return res.end(sitemapXml(publicBase(req))); }
+  if (p === "/") p = "/index.html";
+  if (["/index.html", "/reseller.html", "/product.html", "/reseller", "/product"].includes(p)) {
+    return serveHtml(req, res, p.replace(/^\//, "").replace(/(?<!\.html)$/, ".html"), url);
+  }
   if (p === "/assets/js/data.js") {
     res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-cache" });
     return res.end(publicDataJs());
