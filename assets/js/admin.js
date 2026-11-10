@@ -469,13 +469,37 @@ async function adminSupplierView(ctx) {
       <p class="muted small">Balance: <b>${PX.balance === null ? "—" : money(PX.balance)}</b> · ${PX.products.length} products · ${PX.products.filter((s) => s.available).length} in stock${PX.updatedAt ? " · updated " + fmtDate(PX.updatedAt) : ""}.
       Link a plan in Products → Delivery → "🔗 PixelSub API".</p>
       ${PX.error ? `<div class="form-error">PixelSub API error: ${esc(PX.error)}</div>` : ""}${PX.balanceError ? `<div class="form-error">Balance: ${esc(PX.balanceError)}</div>` : ""}
+      <form class="sup-import" id="px-import">
+        <span>Add selected to my store →</span>
+        <select name="category">${cat.CATEGORIES.map((c) => `<option>${esc(c)}</option>`).join("")}</select>
+        <span class="inp-suffix">markup <input name="markup" type="number" min="0" max="1000" step="0.1" value="${S.defaultMarkup ?? 30}">%</span>
+        <span class="inp-suffix">reseller <input name="resellerMarkup" type="number" min="0" max="1000" step="0.1" value="${S.defaultResellerMarkup ?? ""}" placeholder="—">%</span>
+        <input name="group" maxlength="80" placeholder="One product name (optional)" title="Leave empty: each selected item becomes its own product. Fill in: all selected become plans of one product.">
+        <button class="btn btn-primary" id="px-add" disabled>Add 0 selected</button>
+      </form>
       <div class="table-wrap"><table class="sup-table">
-        <thead><tr><th>ID</th><th>Product</th><th>Price</th><th>Stock</th><th>In your store</th></tr></thead>
-        <tbody>${PX.products.map((s) => `<tr class="${s.available ? "" : "muted"}"><td>${esc(s.variant_id)}</td><td><b>${esc(s.product)}</b></td><td>${money(s.usd)}</td>
+        <thead><tr><th></th><th>ID</th><th>Product</th><th>Price</th><th>Your price (default %)</th><th>Stock</th><th>In your store</th></tr></thead>
+        <tbody>${PX.products.map((s) => `<tr class="${s.available ? "" : "muted"}"><td>${s.linkedTo.length ? "" : `<input type="checkbox" data-px="${esc(s.variant_id)}">`}</td><td>${esc(s.variant_id)}</td><td><b>${esc(s.product)}</b></td><td>${money(s.usd)}</td><td><b>${money(ceil2(s.usd * (1 + (S.defaultMarkup ?? 30) / 100)))}</b></td>
           <td>${s.available ? `<b>${s.stock >= 999 ? "unlimited" : s.stock}</b>` : '<span class="bal-short">out</span>'}</td>
           <td>${s.linkedTo.length ? s.linkedTo.map((l) => `<a href="#products" data-editp="${esc(l.slug)}">${esc(l.name)}</a> <span class="muted small">${esc(l.plan)}</span>`).join("<br>") : '<span class="muted small">—</span>'}</td></tr>`).join("")}</tbody>
       </table></div>
     </div>`;
+
+  const bindPx = () => {
+    const form = $("#px-import", el);
+    if (!form) return;
+    const boxes = $$("[data-px]", el), btn = $("#px-add", el);
+    const sync = () => { const n = boxes.filter((b) => b.checked).length; btn.disabled = !n; btn.textContent = `Add ${n} selected`; };
+    boxes.forEach((b) => b.addEventListener("change", sync));
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const f = e.target;
+      btn.disabled = true; btn.textContent = "Adding…";
+      const { ok, data } = await jsonPost(api, "/api/admin/supplier/px-import", { ids: boxes.filter((b) => b.checked).map((b) => b.dataset.px), category: f.category.value, markup: f.markup.value, resellerMarkup: f.resellerMarkup.value, group: f.group.value });
+      toast(ok ? `Added ${data.added} plan(s) (${data.created} new product(s)) — live on the site. Edit names, logos and terms in Products.` : esc(data.error || "Failed"));
+      reload();
+    });
+  };
 
   if (!S.configured) {
     el.innerHTML = `<div class="card panel">
@@ -484,6 +508,7 @@ async function adminSupplierView(ctx) {
       <pre class="code">TOKOPREMIUM_API_KEY=tpk_...</pre>
       <p class="muted small">Get the key from tokopremium.digital → My account → Reseller & API. Never paste it anywhere else.</p>
     </div>${pxHtml}`;
+    bindPx();
     return;
   }
 
@@ -538,6 +563,7 @@ async function adminSupplierView(ctx) {
       </div>
     </div>${pxHtml}`;
 
+  bindPx();
   $("#sup-set", el).rateMode.addEventListener("change", (e) => { $("#sup-set", el).rate.hidden = e.target.value === "auto"; });
   $("#sup-set", el).addEventListener("submit", async (e) => {
     e.preventDefault();

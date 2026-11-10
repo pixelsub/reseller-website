@@ -1598,6 +1598,61 @@ async function adminSupplierImport(req, res) {
   send(res, 200, { ok: true, slug: p.slug, created, added });
 }
 
+// Adds PixelSub API products to the store as linked plans. Each one becomes its own product
+// (name / package / duration are guessed from the supplier's title and can be edited in Products),
+// or, with b.group, all go into one product with that name.
+async function adminPxImport(req, res) {
+  const b = await readBody(req);
+  await refreshPx(15_000);
+  const cat = JSON.parse(JSON.stringify(catalog()));
+  const S = cat.SITE;
+  const ids = Array.isArray(b.ids) ? b.ids.map(String) : [];
+  const picked = pxCache.list.filter((s) => ids.includes(s.id));
+  if (!picked.length) return send(res, 400, { error: "Choose at least one PixelSub product." });
+  if (!cat.CATEGORIES.includes(b.category)) return send(res, 400, { error: "Choose a category." });
+  const markup = b.markup === undefined || b.markup === "" ? Number(S.supplierMarkup ?? 30) : Number(b.markup);
+  const rm = b.resellerMarkup === undefined || b.resellerMarkup === "" || b.resellerMarkup === null ? null : Number(b.resellerMarkup);
+  if (!(markup >= 0 && markup <= 1000)) return send(res, 400, { error: "Markup must be between 0 and 1000%." });
+  if (rm !== null && !(rm >= 0 && rm <= markup)) return send(res, 400, { error: "Reseller markup must be between 0 and the markup." });
+  const slugify = (s) => (String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "product").slice(0, 60);
+  const unitName = { m: "Month", mo: "Month", month: "Month", months: "Month", d: "Day", day: "Day", days: "Day", y: "Year", yr: "Year", year: "Year", years: "Year", w: "Week", week: "Week", weeks: "Week" };
+  const group = str(b.group, 80);
+  let added = 0, createdN = 0;
+  for (const s of picked) {
+    if (cat.PRODUCTS.some((x) => x.variants.some((v) => v.source && v.source.type === "pixelsub" && v.source.variantId === s.id))) continue;
+    let title = s.name, duration = "", pkg = "Standard";
+    const pm = title.match(/\(([^)]{1,30})\)/);
+    if (pm) { pkg = pm[1].trim(); title = title.replace(pm[0], " "); }
+    const dm = title.match(/(\d+)\s*(months?|mo|m|days?|d|years?|yr|y|weeks?|w)\b/i);
+    if (dm) {
+      const n = Number(dm[1]), u = unitName[dm[2].toLowerCase()];
+      duration = `${n} ${u}${n > 1 ? "s" : ""}`;
+      title = title.replace(dm[0], " ");
+    }
+    title = title.replace(/[–—-]\s*$/g, "").replace(/\s{2,}/g, " ").replace(/\s+[–—-]\s+/g, " ").trim() || s.name;
+    if (!duration) duration = "Standard";
+    const name = group || title;
+    const slug = slugify(name);
+    let p = cat.PRODUCTS.find((x) => x.slug === slug);
+    if (!p) {
+      p = { slug, name, category: b.category, icon: name.slice(0, 1).toUpperCase(), color: "#2563eb", short: `${name} — instant delivery.`,
+        sold: 0, isNew: true, popular: false, terms: [], variants: [] };
+      const img = ["png", "webp"].map((e) => `assets/img/${slug}.${e}`).find((f) => fs.existsSync(path.join(root, f)));
+      if (img) p.image = img;
+      cat.PRODUCTS.push(p);
+      createdN++;
+    }
+    while (p.variants.some((v) => v.pkg === pkg && v.duration === duration)) duration += " ·";
+    const v = { pkg, duration, warranty: "—", stock: 0, source: { type: "pixelsub", variantId: s.id, markup: r2(markup), resellerMarkup: rm === null ? null : r2(rm) } };
+    const q = pxQuote(v);
+    Object.assign(v, { price: q ? q.price : 0.01, bulkPrice: q ? q.bulkPrice : null, cost: q ? q.cost : null });
+    p.variants.push(v);
+    added++;
+  }
+  saveCatalog(cat);
+  send(res, 200, { ok: true, added, created: createdN });
+}
+
 async function api(req, res, url) {
   const parts = url.pathname.split("/").filter(Boolean); // ["api", ...]
   const route = req.method + " " + parts.slice(1).join("/");
@@ -1650,6 +1705,7 @@ async function api(req, res, url) {
     if (route === "GET admin/supplier") return adminSupplier(req, res);
     if (route === "POST admin/supplier/settings") return adminSupplierSettings(req, res);
     if (route === "POST admin/supplier/import") return adminSupplierImport(req, res);
+    if (route === "POST admin/supplier/px-import") return adminPxImport(req, res);
     if (route === "POST admin/supplier/retry") return send(res, 200, { retried: await retrySupplierOrders() });
     if (req.method === "POST" && parts[2] === "orders" && parts[4] === "supplier-retry" && parts.length === 5) {
       const o = await supplierDeliver(parts[3]);
