@@ -219,7 +219,7 @@ async function adminProducts(ctx) {
           const stock = p.variants.reduce((a, v) => a + (v.source || v.manual ? v.stock || 0 : stockOf[`${p.slug}|${v.pkg}|${v.duration}`] || 0), 0);
           const noCost = p.variants.some((v) => v.cost === null || v.cost === undefined);
           const linked = p.variants.some((v) => v.source);
-          return `<tr data-slug="${esc(p.slug)}">
+return `<tr data-slug="${esc(p.slug)}">
             <td>${productIcon(p, "sm")}</td>
             <td><b>${esc(p.name)}</b>${p.isNew ? ' <span class="tag tag-new">New</span>' : ""}${linked ? ' <span class="tag tag-sup">🔗 TokoPremium</span>' : ""}<br><span class="muted small">${esc(p.slug)}</span></td>
             <td class="muted">${esc(p.category)}</td>
@@ -260,15 +260,18 @@ function productEditor(ctx, cat, stockOf) {
   let slugTouched = !!orig;
 
   const sup = ctx.supplier || { products: [], rate: 17900, defaultMarkup: 30, defaultResellerMarkup: null };
+  const pxProducts = ((sup.pixelsub && sup.pixelsub.products) || []);
+  const isPx = (src) => !!src && src.type === "pixelsub";
   const supById = Object.fromEntries(sup.products.map((s) => [s.variant_id, s]));
+  const pxById = Object.fromEntries(pxProducts.map((s) => [s.variant_id, s]));
   const idr = (n) => "Rp " + Number(n).toLocaleString("en-US");
 
   // Same formula as the server (supplierQuote) — preview only; the server recalculates on save and on every order
   const quote = (src) => {
-    const s = src && supById[src.variantId];
+    const s = src && (isPx(src) ? pxById : supById)[src.variantId];
     if (!s) return null;
     const ceil2 = (n) => Math.max(0.01, Math.ceil(Math.round(n * 10000) / 100) / 100);
-    const cost = s.price / (sup.converted === false ? 1 : sup.rate); // USD
+    const cost = isPx(src) ? s.price : s.price / (sup.converted === false ? 1 : sup.rate); // USD
     const price = ceil2(cost * (1 + (Number(src.markup) || 0) / 100));
     let bulk = src.resellerMarkup === "" || src.resellerMarkup === null || src.resellerMarkup === undefined ? null : ceil2(cost * (1 + Number(src.resellerMarkup) / 100));
     if (bulk !== null && bulk >= price) bulk = null;
@@ -276,15 +279,17 @@ function productEditor(ctx, cat, stockOf) {
   };
 
   const supRow = (v, i) => {
-    const q = quote(v.source);
+    const q = quote(v.source), px = isPx(v.source), sname = px ? "PixelSub API" : "TokoPremium";
+    const opts = px ? pxProducts.map((s) => `<option value="${esc(s.variant_id)}" ${v.source.variantId === s.variant_id ? "selected" : ""}>${esc(s.product)} — ${money(s.usd)} · stock ${s.stock >= 999 ? "∞" : s.stock}</option>`)
+      : sup.products.map((s) => `<option value="${esc(s.variant_id)}" ${v.source.variantId === s.variant_id ? "selected" : ""}>${esc(s.product)} · ${esc(s.variant)} — ${money(s.usd)} · stock ${s.stock}</option>`);
     return `<tr class="sup-row" data-i="${i}"><td colspan="10">
       <div class="sup-link">
-        <span class="sup-tag">🔗 TokoPremium</span>
-        <select data-s="variantId"><option value="">— choose product —</option>${sup.products.map((s) => `<option value="${esc(s.variant_id)}" ${v.source.variantId === s.variant_id ? "selected" : ""}>${esc(s.product)} · ${esc(s.variant)} — ${money(s.usd)} · stock ${s.stock}</option>`).join("")}</select>
+        <span class="sup-tag">🔗 ${sname}</span>
+        <select data-s="variantId"><option value="">— choose product —</option>${opts.join("")}</select>
         <label>Markup <input data-s="markup" type="number" min="0" max="1000" step="0.1" value="${v.source.markup ?? ""}" class="w-num">%</label>
         <label>Reseller 2+ <input data-s="resellerMarkup" type="number" min="0" max="1000" step="0.1" value="${v.source.resellerMarkup ?? ""}" placeholder="—" class="w-num">%</label>
-        <span class="sup-preview">${q ? `TokoPremium <b>${money(q.cost)}</b>${sup.converted !== false ? ` <span class="muted">(${idr(q.s.price)})</span>` : ""} → your price <b>${money(q.price)}</b>${q.bulk !== null ? ` · 2+ <b>${money(q.bulk)}</b>` : ""} · stock <b>${q.s.available ? q.s.stock : 0}</b>`
-          : sup.products.length ? "Choose a TokoPremium product" : `<span class="bal-short">Supplier not connected — see the Supplier page</span>`}</span>
+        <span class="sup-preview">${q ? `${sname} <b>${money(q.cost)}</b>${!px && sup.converted !== false ? ` <span class="muted">(${idr(q.s.price)})</span>` : ""} → your price <b>${money(q.price)}</b>${q.bulk !== null ? ` · 2+ <b>${money(q.bulk)}</b>` : ""} · stock <b>${q.s.available ? q.s.stock : 0}</b>`
+          : (px ? pxProducts.length : sup.products.length) ? `Choose a ${sname} product` : `<span class="bal-short">Supplier not connected — see the Supplier page</span>`}</span>
       </div>
     </td></tr>`;
   };
@@ -293,7 +298,7 @@ function productEditor(ctx, cat, stockOf) {
     const key = `${p.slug}|${v.pkg}|${v.duration}`;
     const linked = !!v.source, q = linked ? quote(v.source) : null;
     const show = (k) => (q ? (k === "cost" ? q.cost : k === "price" ? q.price : q.bulk) : v[k]);
-    const mode = linked ? "tp" : v.manual ? "manual" : "";
+    const mode = linked ? (isPx(v.source) ? "px" : "tp") : v.manual ? "manual" : "";
     return `<tr data-i="${i}" class="${linked ? "linked" : ""}">
       <td><input data-f="pkg" value="${esc(v.pkg || "")}" placeholder="Shared"></td>
       <td><input data-f="duration" value="${esc(v.duration || "")}" placeholder="1 Month"></td>
@@ -302,7 +307,7 @@ function productEditor(ctx, cat, stockOf) {
       <td><input data-f="bulkPrice" type="number" step="0.01" min="0.01" value="${show("bulkPrice") ?? ""}" placeholder="optional" ${linked ? "readonly" : ""}></td>
       <td class="mg">${marginHtml(show("cost"), show("price"), show("bulkPrice"))}</td>
       <td><input data-f="warranty" value="${esc(v.warranty || "")}" placeholder="30 Days"></td>
-      <td><select data-f="delivery"><option value="">⚡ Auto (my stock)</option><option value="manual" ${mode === "manual" ? "selected" : ""}>Manual</option><option value="tp" ${mode === "tp" ? "selected" : ""}>🔗 TokoPremium</option></select></td>
+      <td><select data-f="delivery"><option value="">⚡ Auto (my stock)</option><option value="manual" ${mode === "manual" ? "selected" : ""}>Manual</option><option value="tp" ${mode === "tp" ? "selected" : ""}>🔗 TokoPremium</option><option value="px" ${mode === "px" ? "selected" : ""}>🔗 PixelSub API</option></select></td>
       <td>${linked ? `<span class="muted small">${q ? (q.s.available ? q.s.stock : 0) : 0} live</span>` : v.manual ? `<input data-f="stock" type="number" min="0" step="1" value="${v.stock ?? 0}" class="w-num">` : `<span class="muted small">${stockOf[v.origKey || key] || 0} in stock</span>`}</td>
       <td><button type="button" class="icon-btn" data-rmv aria-label="Remove plan">${ICON.trash}</button></td>
     </tr>${linked ? supRow(v, i) : ""}`;
@@ -376,8 +381,10 @@ function productEditor(ctx, cat, stockOf) {
         const k = inp.dataset.f;
         if (k === "delivery") {
           v.manual = inp.value === "manual";
-          if (inp.value === "tp") v.source = v.source || { type: "tokopremium", variantId: "", markup: sup.defaultMarkup, resellerMarkup: sup.defaultResellerMarkup };
-          else delete v.source;
+          const want = inp.value === "tp" ? "tokopremium" : inp.value === "px" ? "pixelsub" : "";
+          if (want) {
+            if (!v.source || v.source.type !== want) v.source = { type: want, variantId: "", markup: sup.defaultMarkup, resellerMarkup: sup.defaultResellerMarkup };
+          } else delete v.source;
         } else if (["cost", "price", "bulkPrice"].includes(k)) v[k] = inp.value === "" ? null : Number(inp.value);
         else if (k === "stock") v.stock = Number(inp.value) || 0;
         else v[k] = inp.value;
@@ -450,13 +457,33 @@ async function adminSupplierView(ctx) {
   const idr = (n) => "Rp " + Number(n).toLocaleString("en-US");
   const ceil2 = (n) => Math.max(0.01, Math.ceil(Math.round(n * 10000) / 100) / 100);
 
+  // Second supplier: PixelSub API (prices in USD). Plans are linked to it in Products → Delivery.
+  const PX = S.pixelsub || { configured: false, products: [] };
+  const pxHtml = !PX.configured ? `<div class="card panel">
+      <h3>PixelSub API supplier</h3>
+      <p>Add the key to the server's <code>.env</code> file (or Railway variables) and restart:</p>
+      <pre class="code">PIXELSUB_API_KEY=...</pre>
+      <p class="muted small">Then in Products, set a plan's Delivery to "🔗 PixelSub API" and pick the product.</p>
+    </div>` : `<div class="card panel">
+      <h3>PixelSub API supplier</h3>
+      <p class="muted small">Balance: <b>${PX.balance === null ? "—" : money(PX.balance)}</b> · ${PX.products.length} products · ${PX.products.filter((s) => s.available).length} in stock${PX.updatedAt ? " · updated " + fmtDate(PX.updatedAt) : ""}.
+      Link a plan in Products → Delivery → "🔗 PixelSub API".</p>
+      ${PX.error ? `<div class="form-error">PixelSub API error: ${esc(PX.error)}</div>` : ""}${PX.balanceError ? `<div class="form-error">Balance: ${esc(PX.balanceError)}</div>` : ""}
+      <div class="table-wrap"><table class="sup-table">
+        <thead><tr><th>ID</th><th>Product</th><th>Price</th><th>Stock</th><th>In your store</th></tr></thead>
+        <tbody>${PX.products.map((s) => `<tr class="${s.available ? "" : "muted"}"><td>${esc(s.variant_id)}</td><td><b>${esc(s.product)}</b></td><td>${money(s.usd)}</td>
+          <td>${s.available ? `<b>${s.stock >= 999 ? "unlimited" : s.stock}</b>` : '<span class="bal-short">out</span>'}</td>
+          <td>${s.linkedTo.length ? s.linkedTo.map((l) => `<a href="#products" data-editp="${esc(l.slug)}">${esc(l.name)}</a> <span class="muted small">${esc(l.plan)}</span>`).join("<br>") : '<span class="muted small">—</span>'}</td></tr>`).join("")}</tbody>
+      </table></div>
+    </div>`;
+
   if (!S.configured) {
     el.innerHTML = `<div class="card panel">
       <h3>Connect TokoPremium</h3>
       <p>Add your TokoPremium API key to the server's <code>.env</code> file and restart the server:</p>
       <pre class="code">TOKOPREMIUM_API_KEY=tpk_...</pre>
       <p class="muted small">Get the key from tokopremium.digital → My account → Reseller & API. Never paste it anywhere else.</p>
-    </div>`;
+    </div>${pxHtml}`;
     return;
   }
 
@@ -509,7 +536,7 @@ async function adminSupplierView(ctx) {
             </tr>`).join("")).join("")}</tbody>
         </table>
       </div>
-    </div>`;
+    </div>${pxHtml}`;
 
   $("#sup-set", el).rateMode.addEventListener("change", (e) => { $("#sup-set", el).rate.hidden = e.target.value === "auto"; });
   $("#sup-set", el).addEventListener("submit", async (e) => {

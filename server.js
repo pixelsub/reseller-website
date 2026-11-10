@@ -285,6 +285,7 @@ async function supRequest(method, pathname, body, extraHeaders = {}) {
 
 // Refreshes the supplier catalogue (price + stock). Cached for 55 s unless forced / older than maxAge.
 async function refreshSupplier(maxAge = 55_000) {
+  await refreshPx(maxAge); // second supplier (PixelSub API), no-op without its key
   if (supKey()) await refreshSupplierRate(); // throttled: at most every 10 min
   if (!supKey() || Date.now() - supCache.at < maxAge) return supCache;
   try {
@@ -298,7 +299,62 @@ async function refreshSupplier(maxAge = 55_000) {
   }
   return supCache;
 }
+/* ---------- Supplier #2: PixelSub reseller API (X-API-Key, prices in USD) ----------
+   Plans linked to it: variant.source = { type: "pixelsub", variantId: "<productId>", markup, resellerMarkup }
+   Env: PIXELSUB_API_KEY, PIXELSUB_API_BASE (default below) */
+const PX_BASE = (process.env.PIXELSUB_API_BASE || "https://pixelsub-production-f248.up.railway.app/api/v1").replace(/\/$/, "");
+const pxKey = () => process.env.PIXELSUB_API_KEY || "";
+let pxCache = { at: 0, byId: {}, list: [], error: "", balance: null };
+
+async function pxRequest(method, pathname, body) {
+  if (!pxKey()) throw new Error("PixelSub API key is not set on the server (PIXELSUB_API_KEY).");
+  const r = await fetch(PX_BASE + pathname, {
+    method,
+    headers: { "X-API-Key": pxKey(), ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(20_000),
+  });
+  const json = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = json.error;
+    throw new Error((e && (e.message || e.code)) || (typeof e === "string" && e) || json.message || `PixelSub API error (HTTP ${r.status})`);
+  }
+  return json;
+}
+
+async function refreshPx(maxAge = 55_000) {
+  if (!pxKey() || Date.now() - pxCache.at < maxAge) return pxCache;
+  try {
+    const json = await pxRequest("GET", "/products");
+    const arr = Array.isArray(json) ? json : Array.isArray(json.products) ? json.products : Array.isArray(json.data) ? json.data : [];
+    const list = arr.map((x) => ({
+      id: String(x.id), name: String(x.name || `Product ${x.id}`), price: Number(x.price) || 0,
+      stock: x.stock === null || x.stock === undefined ? null : Math.max(0, Number(x.stock) || 0), // null = unlimited
+      inStock: x.inStock !== false,
+    }));
+    pxCache = { ...pxCache, at: Date.now(), list, byId: Object.fromEntries(list.map((x) => [x.id, x])), error: "" };
+  } catch (e) {
+    pxCache.error = e.message;
+    pxCache.at = Date.now() - maxAge + 15_000;
+    console.error("PixelSub API refresh:", e.message);
+  }
+  return pxCache;
+}
 if (supKey()) { refreshSupplier(0); setInterval(() => refreshSupplier(), 60_000).unref(); }
+else if (pxKey()) { refreshPx(0); setInterval(() => refreshPx(), 60_000).unref(); }
+const PX_UNLIMITED = 999; // shown stock for "unlimited" products
+
+function pxQuote(v) {
+  const s = pxCache.byId[String(v.source.variantId)];
+  if (!s) return null;
+  const cost = s.price;
+  const price = ceil2(cost * (1 + (Number(v.source.markup) || 0) / 100));
+  let bulkPrice = v.source.resellerMarkup === null || v.source.resellerMarkup === undefined || v.source.resellerMarkup === ""
+    ? null : ceil2(cost * (1 + Number(v.source.resellerMarkup) / 100));
+  if (bulkPrice !== null && bulkPrice >= price) bulkPrice = null;
+  const stock = s.inStock ? (s.stock === null ? PX_UNLIMITED : s.stock) : 0;
+  return { cost: r4(cost), unitCost: r4(cost), price, bulkPrice, stock, minQty: 1, supplierPrice: s.price, supplierStock: s.stock, available: stock > 0 };
+}
 
 const r4 = (n) => Math.round(n * 10000) / 10000;
 // How many supplier currency units = 1 USD:
@@ -325,6 +381,7 @@ const ceil2 = (n) => Math.max(0.01, Math.ceil(Math.round(n * 10000) / 100) / 100
 
 // Live numbers for one linked plan (null if the supplier hasn't been loaded yet)
 function supplierQuote(v, SITE, qty = 1) {
+  if (v.source && v.source.type === "pixelsub") return pxQuote(v);
   const s = v.source && supCache.byId[v.source.variantId];
   if (!s) return null;
   const rate = supRate(SITE);
@@ -441,6 +498,16 @@ async function supplierDeliver(orderId) {
   try {
     for (const { it, idx } of lines) {
       try {
+        if (it.supplier.type === "pixelsub") {
+          // PixelSub API: POST /orders { productId, quantity, reference } -> order.items[].delivered
+          const r = await pxRequest("POST", "/orders", { productId: Number.isNaN(Number(it.supplier.variantId)) ? it.supplier.variantId : Number(it.supplier.variantId), quantity: it.qty, reference: `${o.id}-${idx}` });
+          const so = r.order || r;
+          const accounts = (Array.isArray(so.items) ? so.items : []).flatMap((x) => Array.isArray(x.delivered) ? x.delivered : typeof x.delivered === "string" ? x.delivered.split(/\r?\n/) : [])
+            .map((x) => String(x).trim()).filter(Boolean);
+          if (accounts.length < it.qty) throw new Error(`PixelSub order ${so.id || ""} returned ${accounts.length} of ${it.qty} account(s) — retry later.`);
+          results.push({ idx, accounts: accounts.slice(0, it.qty), supplierOrderId: so.id });
+          continue;
+        }
         const r = await supRequest("POST", "/orders", { variant_id: it.supplier.variantId, qty: it.qty }, { "Idempotency-Key": `${o.id}-${idx}` });
         const so = r.order || {};
         const accounts = Array.isArray(so.accounts) ? so.accounts.map(String) : [];
@@ -492,7 +559,7 @@ async function retrySupplierOrders({ onlyStale = false } = {}) {
 // Paid orders stuck on a supplier problem (e.g. empty TokoPremium balance) are retried every minute,
 // so they deliver by themselves as soon as the balance is topped up or stock is back.
 let autoRetryRunning = false;
-if (supKey()) setInterval(async () => {
+if (supKey() || pxKey()) setInterval(async () => {
   if (autoRetryRunning) return;
   autoRetryRunning = true;
   try { await retrySupplierOrders({ onlyStale: true }); } catch (e) { console.error("Supplier auto-retry:", e.message); }
@@ -1176,14 +1243,15 @@ function cleanProduct(b, CATEGORIES) {
     if (!v.pkg || !v.duration) return { error: `${n}: package and duration are required.` };
     if (seen.has(v.pkg + "|" + v.duration)) return { error: `${n}: "${v.pkg} – ${v.duration}" is listed twice.` };
     seen.add(v.pkg + "|" + v.duration);
-    if (x.source && x.source.type === "tokopremium") {
+    if (x.source && (x.source.type === "tokopremium" || x.source.type === "pixelsub")) {
       // Linked to the supplier: price comes from supplier price + markup
+      const stype = x.source.type, sname = stype === "pixelsub" ? "PixelSub API" : "TokoPremium";
       const markup = Number(x.source.markup), rm = x.source.resellerMarkup;
       const resellerMarkup = rm === "" || rm === null || rm === undefined ? null : Number(rm);
-      if (!str(x.source.variantId, 80)) return { error: `${n}: choose the TokoPremium product.` };
+      if (!str(x.source.variantId, 80)) return { error: `${n}: choose the ${sname} product.` };
       if (!(markup >= 0 && markup <= 1000)) return { error: `${n}: markup must be between 0 and 1000%.` };
       if (resellerMarkup !== null && !(resellerMarkup >= 0 && resellerMarkup <= markup)) return { error: `${n}: reseller markup must be between 0 and the normal markup.` };
-      v.source = { type: "tokopremium", variantId: str(x.source.variantId, 80), markup: r2(markup), resellerMarkup: resellerMarkup === null ? null : r2(resellerMarkup) };
+      v.source = { type: stype, variantId: str(x.source.variantId, 80), markup: r2(markup), resellerMarkup: resellerMarkup === null ? null : r2(resellerMarkup) };
       const q = supplierQuote(v, catalog().SITE);
       v.price = q ? q.price : v.price > 0 ? r2(v.price) : 0.01; // last known price, refreshed live
       v.bulkPrice = q ? q.bulkPrice : null;
@@ -1438,10 +1506,30 @@ async function adminSupplier(req, res) {
     } catch (e) { balanceError = e.message; }
   }
   const links = {};
-  for (const p of PRODUCTS) for (const v of p.variants) if (v.source) (links[v.source.variantId] = links[v.source.variantId] || []).push({ slug: p.slug, name: p.name, plan: `${v.pkg} – ${v.duration}` });
+  for (const p of PRODUCTS) for (const v of p.variants) if (v.source && v.source.type !== "pixelsub") (links[v.source.variantId] = links[v.source.variantId] || []).push({ slug: p.slug, name: p.name, plan: `${v.pkg} – ${v.duration}` });
   const rate = supRate(SITE);
+  // Second supplier: PixelSub API (USD)
+  let pxBalance = null, pxBalanceError = "";
+  if (pxKey()) {
+    try {
+      const b = await pxRequest("GET", "/balance");
+      const raw = b.balance ?? (b.data && b.data.balance) ?? b.amount ?? null;
+      pxBalance = raw === null || raw === undefined || raw === "" ? null : Number(raw);
+      if (pxBalance !== null && !Number.isFinite(pxBalance)) pxBalance = null;
+      pxCache.balance = pxBalance;
+    } catch (e) { pxBalanceError = e.message; }
+  }
+  const pxLinks = {};
+  for (const p of PRODUCTS) for (const v of p.variants) if (v.source && v.source.type === "pixelsub") (pxLinks[v.source.variantId] = pxLinks[v.source.variantId] || []).push({ slug: p.slug, name: p.name, plan: `${v.pkg} – ${v.duration}` });
+  const pixelsub = {
+    configured: !!pxKey(), balance: pxBalance, balanceError: pxBalanceError, error: pxCache.error,
+    updatedAt: pxCache.at ? new Date(pxCache.at).toISOString() : null,
+    products: pxCache.list.map((s) => ({ variant_id: s.id, product: s.name, variant: "", price: s.price, usd: s.price, stock: s.inStock ? (s.stock === null ? PX_UNLIMITED : s.stock) : 0,
+      available: s.inStock, linkedTo: pxLinks[s.id] || [] })),
+  };
   // Everything is reported in USD for the admin; the supplier's own currency is kept for reference
   send(res, 200, {
+    pixelsub,
     configured: !!supKey(), mode, balanceError,
     balanceUsd: balance === null ? null : r2(balance / supRate(SITE, balanceCurrency)),
     balanceOriginal: balance, balanceCurrency,
@@ -1495,7 +1583,7 @@ async function adminSupplierImport(req, res) {
   }
   let added = 0;
   for (const s of picked) {
-    if (p.variants.some((v) => v.source && v.source.variantId === s.variant_id)) continue;
+    if (p.variants.some((v) => v.source && v.source.type !== "pixelsub" && v.source.variantId === s.variant_id)) continue;
     const pkg = s.account_type ? s.account_type[0].toUpperCase() + s.account_type.slice(1) : "Account";
     let duration = str(s.variant, 40) || "Plan";
     while (p.variants.some((v) => v.pkg === pkg && v.duration === duration)) duration += " ·";
