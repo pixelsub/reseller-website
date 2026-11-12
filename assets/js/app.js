@@ -588,11 +588,15 @@ function initProduct() {
   $("#q-minus").addEventListener("click", () => { qty--; update(); });
   $("#q-plus").addEventListener("click", () => { qty++; update(); });
   qIn.addEventListener("change", () => { qty = parseInt(qIn.value, 10) || 1; update(); });
+  const pxData = () => ({ content_type: "product", content_ids: [p.slug], content_name: p.name, value: unitPrice(p.variants[vi], qty) * qty, currency: "USD" });
+  window.track?.("ViewContent", { content_type: "product", content_ids: [p.slug], content_name: p.name, value: p.variants[vi].price, currency: "USD" });
   $("#btn-add").addEventListener("click", () => {
+    window.track?.("AddToCart", pxData());
     Cart.add(p.slug, vi, qty);
     toast(`Added ${qty} × ${esc(p.name)} to cart · <a href="cart.html">View cart</a>`);
   });
   $("#btn-buy").addEventListener("click", () => {
+    window.track?.("AddToCart", pxData());
     Cart.add(p.slug, vi, qty);
     location.href = "cart.html";
   });
@@ -669,6 +673,10 @@ function initCart() {
       render();
     }));
     const form = $("#checkout-form");
+    if (!window.__pxCheckout) {
+      window.__pxCheckout = true;
+      window.track?.("InitiateCheckout", { content_type: "product", content_ids: lines.map((l) => l.p.slug), num_items: lines.reduce((a, l) => a + l.qty, 0), value: subtotal, currency: "USD" });
+    }
     bindPayForm(form, () => subtotal, (m) => {
       const btn = $("#place-btn");
       const short = m === "Balance" && USER.balance < subtotal;
@@ -686,7 +694,7 @@ function initCart() {
         const r = await fetch("/api/orders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ items: Cart.get(), ...(await payBody(form)) }),
+          body: JSON.stringify({ items: Cart.get(), pageUrl: location.href, ...(await payBody(form)) }),
         });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || "Could not place the order. Please try again.");
@@ -851,6 +859,15 @@ async function initOrder() {
           <button class="btn btn-outline btn-block" id="refresh-btn" style="margin-top:14px">Refresh status</button>
         </aside>
       </div>`;
+    if (o.payment.verified || ["processing", "delivered"].includes(o.status)) {
+      const key = "px_purchase_" + o.id;
+      try {
+        if (!localStorage.getItem(key)) {
+          localStorage.setItem(key, "1");
+          fbq("track", "Purchase", { value: Number(o.total) || 0, currency: "USD", content_type: "product" }, { eventID: o.id });
+        }
+      } catch (e) {}
+    }
     $("#refresh-btn").addEventListener("click", () => location.reload());
     $$("[data-copy]", root).forEach((b) => b.addEventListener("click", () => copyText(b.dataset.copy, b)));
     const vb = $("#verify-btn");

@@ -853,6 +853,54 @@ function logout(req, res) {
   send(res, 200, { ok: true });
 }
 
+/* ---------- Meta Conversions API (server-side Purchase) ---------- */
+// Needs META_CAPI_TOKEN (Events Manager > Settings > Conversions API > Generate access token).
+// META_PIXEL_ID defaults to the site's pixel; META_CAPI_TEST_CODE sends events to the "Test events" tab only.
+const META_PIXEL_ID = process.env.META_PIXEL_ID || "2379334222855444";
+const metaSent = new Set();
+const mHash = (s) => crypto.createHash("sha256").update(String(s).trim().toLowerCase()).digest("hex");
+const cookieOf = (req, name) => ((req.headers.cookie || "").match(new RegExp("(?:^|;\\s*)" + name + "=([^;]+)")) || [])[1] || "";
+
+// Browser details saved on the order so the Purchase can be matched later (even when the admin confirms it).
+function metaContext(req, url) {
+  return {
+    fbp: cookieOf(req, "_fbp"), fbc: cookieOf(req, "_fbc"),
+    ip: String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim(),
+    ua: String(req.headers["user-agent"] || "").slice(0, 300),
+    url: url || "",
+  };
+}
+
+function metaPurchase(order) {
+  const token = process.env.META_CAPI_TOKEN;
+  if (!token || !order || !order.payment || !order.payment.verified || metaSent.has(order.id)) return;
+  metaSent.add(order.id);
+  const m = order.meta || {};
+  const user_data = {};
+  if (m.fbp) user_data.fbp = m.fbp;
+  if (m.fbc) user_data.fbc = m.fbc;
+  if (m.ip) user_data.client_ip_address = m.ip;
+  if (m.ua) user_data.client_user_agent = m.ua;
+  if (order.customer && order.customer.username) user_data.external_id = [mHash(order.customer.username)];
+  const payload = {
+    data: [{
+      event_name: "Purchase",
+      event_time: Math.floor(new Date(order.payment.verifiedAt || Date.now()).getTime() / 1000),
+      event_id: order.id, // same id as the browser pixel -> Meta de-duplicates
+      action_source: "website",
+      ...(m.url ? { event_source_url: m.url } : {}),
+      user_data,
+      custom_data: { value: Number(order.total) || 0, currency: "USD", content_type: "product", content_ids: (order.items || []).map((i) => i.slug).filter(Boolean) },
+    }],
+    ...(process.env.META_CAPI_TEST_CODE ? { test_event_code: process.env.META_CAPI_TEST_CODE } : {}),
+  };
+  fetch(`https://graph.facebook.com/v21.0/${META_PIXEL_ID}/events?access_token=${encodeURIComponent(token)}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: AbortSignal.timeout(10_000),
+  }).then(async (r) => {
+    if (!r.ok) { metaSent.delete(order.id); console.error("Meta CAPI error:", r.status, (await r.text()).slice(0, 300)); }
+  }).catch((e) => { metaSent.delete(order.id); console.error("Meta CAPI failed:", e.message); });
+}
+
 /* ---------- API ---------- */
 async function createOrder(req, res) {
   const body = await readBody(req, 3_000_000); // room for a payment screenshot
@@ -920,6 +968,7 @@ async function createOrder(req, res) {
     items, total, discount: r2(regular - total),
     customer, payment,
     delivery: "",
+    meta: metaContext(req, str(body.pageUrl, 300)),
   };
   if (useBalance) {
     // Deduct first (throws if the balance is too low), then save the order — no await in between.
@@ -940,6 +989,7 @@ async function createOrder(req, res) {
   const orders = loadOrders(); // read after any await so concurrent orders aren't lost
   orders.unshift(order);
   saveOrders(orders);
+  metaPurchase(order);
   console.log(`New order ${order.id}: ${SITE.currency}${total} via ${payment.method}${payment.verified ? " (verified)" : ""}`);
   if (order.status === "processing") await supplierDeliver(order.id); // buy supplier items now so the customer gets them instantly
   send(res, 201, { id: order.id, token: order.token, verified: !!payment.verified, payUrl: payment.payUrl });
@@ -971,6 +1021,7 @@ async function verifyOrder(id, { reopen = false } = {}) {
   }
   autoDeliver(cur);
   saveOrders(orders);
+  metaPurchase(cur);
   if (cur.status === "processing") return (await supplierDeliver(id)) || cur;
   return cur;
 }
@@ -1146,6 +1197,7 @@ async function adminUpdate(req, res, id) {
     autoDeliver(o);
     o.updatedAt = new Date().toISOString();
     saveOrders(orders);
+    metaPurchase(o);
     // Supplier items: buy them now
     await supplierDeliver(id);
     const fresh = loadOrders();
