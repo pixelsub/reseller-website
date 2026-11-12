@@ -231,7 +231,7 @@ function seedCatalog() {
 const PLACEHOLDERS = { whatsapp: "8801700000000", telegram: "pixelsub", payId: "000000000" };
 function fillPlaceholders(data) {
   const S = data.SITE || {}, D = seedCatalog().SITE;
-  for (const k of ["whatsapp", "telegram"]) if (!S[k] || S[k] === PLACEHOLDERS[k]) S[k] = D[k];
+  for (const k of ["whatsapp", "telegram", "bot"]) if (!S[k] || S[k] === PLACEHOLDERS[k]) S[k] = D[k];
   for (const [m, info] of Object.entries(S.paymentInfo || {})) {
     const def = (D.paymentInfo || {})[m];
     if (def && "value" in info && (!info.value || info.value === PLACEHOLDERS.payId)) info.value = def.value;
@@ -1347,6 +1347,12 @@ async function adminSaveSettings(req, res) {
     if (t && !/^[A-Za-z0-9_]{3,32}$/.test(t)) return send(res, 400, { error: "Telegram: username without @ (letters, numbers, _)." });
     set("telegram", t);
   }
+  if (s.bot !== undefined) {
+    let bl = String(s.bot).trim();
+    if (/^@?[A-Za-z0-9_]{4,32}$/.test(bl)) bl = "https://t.me/" + bl.replace(/^@/, "");
+    if (bl && !/^https:\/\/[^\s"'<>]+$/i.test(bl)) return send(res, 400, { error: "Bot link: use a full https:// link (e.g. https://t.me/yourbot) or @username." });
+    set("bot", bl.slice(0, 200));
+  }
   if (s.hours !== undefined) set("hours", str(s.hours, 80));
   for (const k of ["bulkMinQty", "topupMin", "topupMax"]) {
     if (s[k] === undefined) continue;
@@ -1811,6 +1817,7 @@ function sitemapXml(base) {
   const urls = [
     { loc: `${base}/`, pr: "1.0", cf: "daily" },
     { loc: `${base}/reseller.html`, pr: "0.7", cf: "weekly" },
+    { loc: `${base}/landing.html`, pr: "0.6", cf: "weekly" },
     ...PRODUCTS.map((p) => ({ loc: `${base}/product.html?p=${encodeURIComponent(p.slug)}`, pr: "0.8", cf: "daily" })),
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
@@ -1846,6 +1853,13 @@ function seoHead(file, url, base) {
       title: `Become a Reseller | Wholesale Premium Account Prices | ${name}`,
       desc: `Join the ${name} reseller program and buy premium accounts for less when you take 2 or more. Wholesale prices on Netflix, ChatGPT, CapCut, Canva and more.`,
       canon: `${base}/reseller.html`,
+    });
+  }
+  if (file === "landing.html") {
+    return mk({
+      title: `Digital Product Supplier at Wholesale Prices | ${name}`,
+      desc: `Looking for a digital product supplier at wholesale prices? Order easily on our website or Telegram bot. Netflix, ChatGPT, CapCut, Canva and more, instant delivery 24/7.`,
+      canon: `${base}/landing.html`,
     });
   }
   if (file === "product.html") {
@@ -1898,7 +1912,7 @@ function serveStatic(req, res, url) {
   if (p === "/robots.txt") { res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" }); return res.end(robotsTxt(publicBase(req))); }
   if (p === "/sitemap.xml") { res.writeHead(200, { "Content-Type": "application/xml; charset=utf-8" }); return res.end(sitemapXml(publicBase(req))); }
   if (p === "/") p = "/index.html";
-  if (["/index.html", "/reseller.html", "/product.html", "/reseller", "/product"].includes(p)) {
+  if (["/index.html", "/reseller.html", "/landing.html", "/product.html", "/reseller", "/landing", "/product"].includes(p)) {
     return serveHtml(req, res, p.replace(/^\//, "").replace(/(?<!\.html)$/, ".html"), url);
   }
   if (p === "/assets/js/data.js") {

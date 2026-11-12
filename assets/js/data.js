@@ -21,6 +21,7 @@ const SITE = {
   bulkMinQty: 2,                    // quantity from which bulkPrice applies
   whatsapp: "8801857234526",        // WhatsApp number, country code, no + or spaces
   telegram: "pixelsub09",           // Telegram username without @
+  bot: "https://t.me/PixelsubCCBOT", // Telegram bot link (main button on /landing)
   email: "support@pixelsub.shop",
   hours: "24/7",
   payments: ["Binance Pay", "Bybit", "Cryptomus"],

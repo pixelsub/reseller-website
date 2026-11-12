@@ -229,6 +229,7 @@ const ICON = {
 
 const waLink = (text) => `https://wa.me/${SITE.whatsapp}${text ? "?text=" + encodeURIComponent(text) : ""}`;
 const tgLink = () => `https://t.me/${SITE.telegram}`;
+const botLink = () => SITE.bot || tgLink();
 
 /* ---------- Layout ---------- */
 function renderHeader() {
@@ -249,6 +250,7 @@ function renderHeader() {
         <a href="${h("#how-to-order")}">How to Order</a>
         <a href="${h("#faq")}">FAQ</a>
         <a href="reseller.html">Reseller</a>
+        <a href="landing.html">Wholesale</a>
         <a href="${USER ? "account.html#orders" : "order.html"}">My Orders</a>
         ${USER ? `<a href="account.html" class="nav-login-link">My Profile</a>` : `<a href="login.html" class="nav-login-link">Login / Join</a>`}
       </nav>
@@ -710,6 +712,33 @@ function initReseller() {
       <td class="muted">${esc(v.pkg)} – ${esc(v.duration)}</td>
       <td>${money(v.price)}</td><td class="hl">${money(v.bulkPrice)}</td>
       <td class="save">${Math.round((1 - v.bulkPrice / v.price) * 100)}%</td></tr>`; }).join("")}</tbody>`;
+}
+
+/* ---------- Page: Ad landing page (Facebook ads) ---------- */
+function initLanding() {
+  $$("[data-bot]").forEach((a) => (a.href = botLink()));
+  $$("[data-wa]").forEach((a) => (a.href = waLink("Hi " + SITE.name + ", I'm looking for wholesale prices.")));
+  const deals = PRODUCTS.filter((p) => totalStock(p) > 0 && productHasBulk(p));
+  const list = (deals.length >= 6 ? deals : PRODUCTS).slice(0, 8);
+  const mq = $("#lp-marquee");
+  if (mq) { const chips = PRODUCTS.map((p) => `<span class="chip">${productIcon(p, "sm")}<b>${esc(p.name)}</b></span>`).join(""); mq.innerHTML = chips + chips; }
+  const live = $("#lp-live-rows");
+  if (live) live.innerHTML = list.slice(0, 4).map((p) => {
+    const v = p.variants.find(hasBulk) || p.variants[0];
+    return `<div class="lp-row">${productIcon(p)}<div class="lp-info"><b>${esc(p.name)}</b><span class="muted">${esc(v.pkg)} · ${esc(v.duration)}</span></div>
+      <div class="lp-price">${hasBulk(v) ? `<s>${money(v.price)}</s><strong>${money(v.bulkPrice)}</strong>` : `<strong>${money(v.price)}</strong>`}</div></div>`;
+  }).join("");
+  const grid = $("#lp-products");
+  if (!grid) return;
+  grid.innerHTML = list.map((p) => {
+    const v = p.variants.find(hasBulk) || p.variants[0];
+    const pct = hasBulk(v) ? Math.round((1 - v.bulkPrice / v.price) * 100) : 0;
+    return `<div class="card lp-item">
+      ${productIcon(p)}
+      <div class="lp-info"><b>${esc(p.name)}</b><span class="muted small">${esc(v.pkg)} · ${esc(v.duration)}</span></div>
+      <div class="lp-price">${hasBulk(v) ? `<s>${money(v.price)}</s><strong>${money(v.bulkPrice)}</strong><em>Save ${pct}%</em>` : `<strong>${money(v.price)}</strong>`}</div>
+    </div>`;
+  }).join("");
 }
 
 /* ---------- Page: Order status / My orders ---------- */
@@ -1588,7 +1617,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   updateCartBadge();
   initMotion();
   const page = document.body.dataset.page;
-  ({ home: initHome, product: initProduct, cart: initCart, reseller: initReseller, order: initOrder, admin: initAdmin, login: initLogin, account: initAccount })[page]?.();
+  ({ home: initHome, product: initProduct, cart: initCart, reseller: initReseller, landing: initLanding, order: initOrder, admin: initAdmin, login: initLogin, account: initAccount })[page]?.();
 });
 window.addEventListener("storage", updateCartBadge);
 

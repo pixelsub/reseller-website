@@ -612,7 +612,8 @@ async function adminSettings({ el, api, reload }) {
         <label>Support email<input name="email" type="email" value="${esc(S.email || "")}" maxlength="100"></label>
         <label>WhatsApp number (country code, digits only)<input name="whatsapp" value="${esc(S.whatsapp || "")}" inputmode="tel" placeholder="8801700000000"></label>
         <label>Telegram username<input name="telegram" value="${esc(S.telegram || "")}" placeholder="pixelsub"></label>
-        <p class="muted small">Shown in the footer, contact section and FAQ.</p>
+        <label>Bot link (used on the ad landing page)<input name="bot" value="${esc(S.bot || "")}" placeholder="https://t.me/yourbot" maxlength="200"></label>
+        <p class="muted small">Shown in the footer, contact section and FAQ. The bot link is the main button on <code>/landing</code>; if empty, the Telegram username is used.</p>
       </div>
       <div class="card panel">
         <h3>Payment methods</h3>
@@ -653,7 +654,7 @@ async function adminSettings({ el, api, reload }) {
     const body = {
       site: {
         name: f.name.value, domain: f.domain.value,
-        email: f.email.value, whatsapp: f.whatsapp.value, telegram: f.telegram.value,
+        email: f.email.value, whatsapp: f.whatsapp.value, telegram: f.telegram.value, bot: f.bot.value,
         bulkMinQty: f.bulkMinQty.value, topupMin: f.topupMin.value, topupMax: f.topupMax.value,
         payments: $$('[name="pm"]:checked', f).map((c) => c.value), paymentIds,
       },
