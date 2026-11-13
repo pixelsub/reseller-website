@@ -228,6 +228,8 @@ const ICON = {
 };
 
 const waLink = (text) => `https://wa.me/${SITE.whatsapp}${text ? "?text=" + encodeURIComponent(text) : ""}`;
+// After applying for the reseller program: open the owner's WhatsApp chat with the request already typed.
+const applyWaLink = (username, link) => waLink(`Hi, please approve me for your reseller website. Username: ${username}${link ? "\nMy store: " + link : ""}`);
 const tgLink = () => `https://t.me/${SITE.telegram}`;
 const botLink = () => SITE.bot || tgLink();
 
@@ -1359,6 +1361,7 @@ async function initApplicantAccount() {
         const d = await r.json().catch(() => ({}));
         if (!r.ok) { err.textContent = d.error || "Could not submit."; err.hidden = false; return; }
         USER = d; toast("Application submitted"); render();
+        location.href = applyWaLink(d.username, d.application && d.application.link);
       });
     }
     const lo = $("#acc-logout");
@@ -1612,6 +1615,7 @@ function initLogin() {
         body: JSON.stringify(Object.fromEntries(f)),
       });
       const d = await r.json().catch(() => ({}));
+      if (r.ok && mode === "join") return location.replace(applyWaLink(d.username, d.application && d.application.link));
       if (r.ok) return location.replace(mode === "join" ? "account.html#status" : (d.reseller ? next : "account.html#status"));
       err.textContent = d.error || "Something went wrong."; err.hidden = false; btn.disabled = false;
     });
