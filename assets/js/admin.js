@@ -272,6 +272,7 @@ function productEditor(ctx, cat, stockOf) {
     if (!s) return null;
     const ceil2 = (n) => Math.max(0.01, Math.ceil(Math.round(n * 10000) / 100) / 100);
     const cost = isPx(src) ? s.price : s.price / (sup.converted === false ? 1 : sup.rate); // USD
+    if (isPx(src)) { const p = Math.max(0.01, Math.round(cost * 10000) / 10000); return { s, cost: p, price: p, bulk: null }; } // no markup
     const price = ceil2(cost * (1 + (Number(src.markup) || 0) / 100));
     let bulk = src.resellerMarkup === "" || src.resellerMarkup === null || src.resellerMarkup === undefined ? null : ceil2(cost * (1 + Number(src.resellerMarkup) / 100));
     if (bulk !== null && bulk >= price) bulk = null;
@@ -286,8 +287,8 @@ function productEditor(ctx, cat, stockOf) {
       <div class="sup-link">
         <span class="sup-tag">🔗 ${sname}</span>
         <select data-s="variantId"><option value="">— choose product —</option>${opts.join("")}</select>
-        <label>Markup <input data-s="markup" type="number" min="0" max="1000" step="0.1" value="${v.source.markup ?? ""}" class="w-num">%</label>
-        <label>Reseller 2+ <input data-s="resellerMarkup" type="number" min="0" max="1000" step="0.1" value="${v.source.resellerMarkup ?? ""}" placeholder="—" class="w-num">%</label>
+        ${px ? "" : `<label>Markup <input data-s="markup" type="number" min="0" max="1000" step="0.1" value="${v.source.markup ?? ""}" class="w-num">%</label>
+        <label>Reseller 2+ <input data-s="resellerMarkup" type="number" min="0" max="1000" step="0.1" value="${v.source.resellerMarkup ?? ""}" placeholder="—" class="w-num">%</label>`}
         <span class="sup-preview">${q ? `${sname} <b>${money(q.cost)}</b>${!px && sup.converted !== false ? ` <span class="muted">(${idr(q.s.price)})</span>` : ""} → your price <b>${money(q.price)}</b>${q.bulk !== null ? ` · 2+ <b>${money(q.bulk)}</b>` : ""} · stock <b>${q.s.available ? q.s.stock : 0}</b>`
           : (px ? pxProducts.length : sup.products.length) ? `Choose a ${sname} product` : `<span class="bal-short">Supplier not connected — see the Supplier page</span>`}</span>
       </div>
@@ -472,14 +473,12 @@ async function adminSupplierView(ctx) {
       <form class="sup-import" id="px-import">
         <span>Add selected to my store →</span>
         <select name="category">${cat.CATEGORIES.map((c) => `<option>${esc(c)}</option>`).join("")}</select>
-        <span class="inp-suffix">markup <input name="markup" type="number" min="0" max="1000" step="0.1" value="${S.defaultMarkup ?? 30}">%</span>
-        <span class="inp-suffix">reseller <input name="resellerMarkup" type="number" min="0" max="1000" step="0.1" value="${S.defaultResellerMarkup ?? ""}" placeholder="—">%</span>
         <input name="group" maxlength="80" placeholder="One product name (optional)" title="Leave empty: each selected item becomes its own product. Fill in: all selected become plans of one product.">
         <button class="btn btn-primary" id="px-add" disabled>Add 0 selected</button>
       </form>
       <div class="table-wrap"><table class="sup-table">
-        <thead><tr><th></th><th>ID</th><th>Product</th><th>Price</th><th>Your price (default %)</th><th>Stock</th><th>In your store</th></tr></thead>
-        <tbody>${PX.products.map((s) => `<tr class="${s.available ? "" : "muted"}"><td>${s.linkedTo.length ? "" : `<input type="checkbox" data-px="${esc(s.variant_id)}">`}</td><td>${esc(s.variant_id)}</td><td><b>${esc(s.product)}</b></td><td>${money(s.usd)}</td><td><b>${money(ceil2(s.usd * (1 + (S.defaultMarkup ?? 30) / 100)))}</b></td>
+        <thead><tr><th></th><th>ID</th><th>Product</th><th>Price (site = same)</th><th>Stock</th><th>In your store</th></tr></thead>
+        <tbody>${PX.products.map((s) => `<tr class="${s.available ? "" : "muted"}"><td>${s.linkedTo.length ? "" : `<input type="checkbox" data-px="${esc(s.variant_id)}">`}</td><td>${esc(s.variant_id)}</td><td><b>${esc(s.product)}</b></td><td><b>${money(s.usd)}</b></td>
           <td>${s.available ? `<b>${s.stock >= 999 ? "unlimited" : s.stock}</b>` : '<span class="bal-short">out</span>'}</td>
           <td>${s.linkedTo.length ? s.linkedTo.map((l) => `<a href="#products" data-editp="${esc(l.slug)}">${esc(l.name)}</a> <span class="muted small">${esc(l.plan)}</span>`).join("<br>") : '<span class="muted small">—</span>'}</td></tr>`).join("")}</tbody>
       </table></div>
@@ -495,7 +494,7 @@ async function adminSupplierView(ctx) {
       e.preventDefault();
       const f = e.target;
       btn.disabled = true; btn.textContent = "Adding…";
-      const { ok, data } = await jsonPost(api, "/api/admin/supplier/px-import", { ids: boxes.filter((b) => b.checked).map((b) => b.dataset.px), category: f.category.value, markup: f.markup.value, resellerMarkup: f.resellerMarkup.value, group: f.group.value });
+      const { ok, data } = await jsonPost(api, "/api/admin/supplier/px-import", { ids: boxes.filter((b) => b.checked).map((b) => b.dataset.px), category: f.category.value, group: f.group.value });
       toast(ok ? `Added ${data.added} plan(s) (${data.created} new product(s)) — live on the site. Edit names, logos and terms in Products.` : esc(data.error || "Failed"));
       reload();
     });
