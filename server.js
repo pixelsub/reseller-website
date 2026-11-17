@@ -5,7 +5,8 @@
 //   BINANCE_API_KEY, BINANCE_API_SECRET  -> read-only Binance API key used to auto-verify Binance Pay payments
 //   BYBIT_API_KEY, BYBIT_API_SECRET      -> read-only Bybit API key used to auto-verify Bybit UID transfers
 //   CRYPTOMUS_MERCHANT_ID, CRYPTOMUS_PAYMENT_API_KEY (or CRYPTOMUS_API_KEY) -> Cryptomus payment API key (invoices + webhooks)
-//   TOKOPREMIUM_API_KEY                  -> TokoPremium reseller API key (live price/stock + automatic supplier orders)
+//   PIXELSUB_API_KEY                     -> PixelSub reseller API key (live price/stock, no markup + automatic supplier orders)
+//   PIXELSUB_AUTO_ADD=0                  -> don't auto-add new PixelSub products to the store
 //   PUBLIC_URL                           -> e.g. https://pixelsub.shop (used for Cryptomus return/webhook links)
 const http = require("http");
 const fs = require("fs");
@@ -255,50 +256,30 @@ function saveCatalog(data) {
   catCache = { mtime: -1, data: null };
 }
 
-/* ---------- Supplier: TokoPremium reseller API ---------- */
-// Plans linked to a TokoPremium variant (variant.source = { type: "tokopremium", variantId, markup, resellerMarkup })
-// take their price and stock live from the supplier:
-//   cost  = supplier price (IDR) ÷ SITE.supplierRate (IDR per 1 USD)
-//   price = cost × (1 + markup%)          reseller 2+ price = cost × (1 + resellerMarkup%)
-// so when the supplier changes its price, ours moves with it. Paid orders are bought from the supplier
-// automatically and the returned accounts are delivered to the customer.
-const SUP_BASE = (process.env.TOKOPREMIUM_API_BASE || "https://api.tokopremium.digital/api/v1").replace(/\/$/, "");
-const supKey = () => process.env.TOKOPREMIUM_API_KEY || "";
-let rateCache = { at: 0, rate: null }; // TokoPremium's own USD rate (declared before the startup refresh below)
-let supCache = { at: 0, byId: {}, list: [], currency: "IDR", error: "", balance: null, mode: "" };
-
-async function supRequest(method, pathname, body, extraHeaders = {}) {
-  if (!supKey()) throw new Error("TokoPremium API key is not set on the server (TOKOPREMIUM_API_KEY).");
-  const r = await fetch(SUP_BASE + pathname, {
-    method,
-    headers: { Authorization: `Bearer ${supKey()}`, ...(body ? { "Content-Type": "application/json" } : {}), ...extraHeaders },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(20_000),
-  });
-  const json = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    const e = json.error;
-    throw new Error((e && (e.message || e.code)) || (typeof e === "string" && e) || json.message || `Supplier error (HTTP ${r.status})`);
+// The TokoPremium supplier was removed (its products are in PixelSub). Drop leftover TokoPremium-linked plans,
+// products that end up empty, and the old supplier settings once, at startup. Unsold orders keep their own item data.
+try {
+  if (fs.existsSync(catalogFile)) {
+    const cat = JSON.parse(fs.readFileSync(catalogFile, "utf8"));
+    let dropped = 0;
+    for (const p of cat.PRODUCTS || []) {
+      const before = p.variants.length;
+      p.variants = p.variants.filter((v) => !(v.source && v.source.type === "tokopremium"));
+      dropped += before - p.variants.length;
+    }
+    const emptied = (cat.PRODUCTS || []).filter((p) => !p.variants.length).length;
+    const oldKeys = Object.keys(cat.SITE || {}).filter((k) => k.startsWith("supplier"));
+    if (dropped || emptied || oldKeys.length) {
+      cat.PRODUCTS = cat.PRODUCTS.filter((p) => p.variants.length);
+      for (const k of oldKeys) delete cat.SITE[k];
+      saveCatalog(cat);
+      console.log(`TokoPremium removed: dropped ${dropped} plan(s), ${emptied} empty product(s)`);
+    }
   }
-  return json;
-}
+} catch (e) { console.error("TokoPremium cleanup:", e.message); }
 
-// Refreshes the supplier catalogue (price + stock). Cached for 55 s unless forced / older than maxAge.
-async function refreshSupplier(maxAge = 55_000) {
-  await refreshPx(maxAge); // second supplier (PixelSub API), no-op without its key
-  if (supKey()) await refreshSupplierRate(); // throttled: at most every 10 min
-  if (!supKey() || Date.now() - supCache.at < maxAge) return supCache;
-  try {
-    const json = await supRequest("GET", "/products");
-    const list = Array.isArray(json.products) ? json.products : [];
-    supCache = { ...supCache, at: Date.now(), list, byId: Object.fromEntries(list.map((x) => [x.variant_id, x])), currency: json.currency || "IDR", error: "" };
-  } catch (e) {
-    supCache.error = e.message;
-    supCache.at = Date.now() - maxAge + 15_000; // retry in ~15 s
-    console.error("Supplier refresh:", e.message);
-  }
-  return supCache;
-}
+/* ---------- Supplier: PixelSub reseller API ---------- */
+const refreshSupplier = (maxAge = 55_000) => refreshPx(maxAge); // the single "refresh prices & stock" entry point
 /* ---------- Supplier #2: PixelSub reseller API (X-API-Key, prices in USD) ----------
    Plans linked to it: variant.source = { type: "pixelsub", variantId: "<productId>", markup, resellerMarkup }
    Env: PIXELSUB_API_KEY, PIXELSUB_API_BASE (default below) */
@@ -341,8 +322,7 @@ async function refreshPx(maxAge = 55_000) {
   }
   return pxCache;
 }
-if (supKey()) { refreshSupplier(0); setInterval(() => refreshSupplier(), 60_000).unref(); }
-else if (pxKey()) { refreshPx(0); setInterval(() => refreshPx(), 60_000).unref(); }
+if (pxKey()) { refreshPx(0); setInterval(() => refreshPx(), 60_000).unref(); }
 const PX_UNLIMITED = 999; // shown stock for "unlimited" products
 
 function pxQuote(v) {
@@ -358,45 +338,11 @@ function pxQuote(v) {
 }
 
 const r4 = (n) => Math.round(n * 10000) / 10000;
-// How many supplier currency units = 1 USD:
-//   - amounts already in USD -> 1
-//   - rate mode "auto" (default): the USD rate TokoPremium itself uses for the $ prices on its website
-//   - rate mode "manual": SITE.supplierRate typed in the admin panel
-async function refreshSupplierRate() {
-  if (Date.now() - rateCache.at < 10 * 60_000) return;
-  rateCache.at = Date.now() - 9 * 60_000; // on failure retry in ~1 min
-  try {
-    const site = (process.env.TOKOPREMIUM_SITE || "https://tokopremium.digital/").replace(/\/?$/, "/");
-    const html = await (await fetch(site, { signal: AbortSignal.timeout(15_000) })).text();
-    const m = html.match(/rates\\?":\s*\[\s*\{\s*\\?"code\\?":\s*\\?"USD\\?"[^}]*?\\?"perUnit\\?":\s*([\d.]+)/);
-    const rate = m ? Number(m[1]) : 0;
-    if (rate > 1000 && rate < 1_000_000) rateCache = { at: Date.now(), rate };
-  } catch (e) { console.error("Supplier rate refresh:", e.message); }
-}
-const supRate = (SITE, currency = supCache.currency) => {
-  if (String(currency || "").toUpperCase() === "USD") return 1;
-  if (SITE.supplierRateMode !== "manual" && rateCache.rate) return rateCache.rate;
-  return Number(SITE.supplierRate) || rateCache.rate || 17900;
-};
 const ceil2 = (n) => Math.max(0.01, Math.ceil(Math.round(n * 10000) / 100) / 100);
 
 // Live numbers for one linked plan (null if the supplier hasn't been loaded yet)
-function supplierQuote(v, SITE, qty = 1) {
-  if (v.source && v.source.type === "pixelsub") return pxQuote(v);
-  const s = v.source && supCache.byId[v.source.variantId];
-  if (!s) return null;
-  const rate = supRate(SITE);
-  const unitIDR = s.bulk && qty >= s.bulk.min_qty ? s.bulk.price : s.price;
-  const cost = s.price / rate;
-  const price = ceil2(cost * (1 + (Number(v.source.markup) || 0) / 100));
-  let bulkPrice = v.source.resellerMarkup === null || v.source.resellerMarkup === undefined || v.source.resellerMarkup === ""
-    ? null : ceil2(cost * (1 + Number(v.source.resellerMarkup) / 100));
-  if (bulkPrice !== null && bulkPrice >= price) bulkPrice = null;
-  return {
-    cost: r4(cost), unitCost: r4(unitIDR / rate), price, bulkPrice,
-    stock: s.available ? Math.max(0, Math.min(Number(s.stock) || 0, Number(s.max_qty) || Infinity)) : 0,
-    minQty: Number(s.min_qty) || 1, supplierPrice: s.price, supplierStock: s.stock, available: !!s.available,
-  };
+function supplierQuote(v) {
+  return v.source && v.source.type === "pixelsub" ? pxQuote(v) : null;
 }
 
 // Catalogue with supplier-linked plans filled in with live price, stock and cost
@@ -485,8 +431,8 @@ function finishDelivery(order, texts) {
 }
 const deliveryText = (item) => `${item.name} (${item.plan})\n` + item.delivered.map((d, i) => `${item.qty > 1 ? `#${i + 1}  ` : ""}${d}`).join("\n");
 
-// Buys the order's supplier-linked items from TokoPremium and delivers the returned accounts.
-// The Idempotency-Key (order id + line) means a retry can never buy the same line twice.
+// Buys the order's supplier-linked items from PixelSub and delivers the returned accounts.
+// The reference (order id + line) lets PixelSub recognise a retry of the same line.
 const supBusy = new Set();
 async function supplierDeliver(orderId) {
   if (supBusy.has(orderId)) return null;
@@ -509,12 +455,8 @@ async function supplierDeliver(orderId) {
           results.push({ idx, accounts: accounts.slice(0, it.qty), supplierOrderId: so.id });
           continue;
         }
-        const r = await supRequest("POST", "/orders", { variant_id: it.supplier.variantId, qty: it.qty }, { "Idempotency-Key": `${o.id}-${idx}` });
-        const so = r.order || {};
-        const accounts = Array.isArray(so.accounts) ? so.accounts.map(String) : [];
-        if (accounts.length < it.qty) throw new Error(`Supplier order ${so.id || ""} is "${so.status || "unknown"}" without accounts yet — retry later.`);
-        if (typeof r.balance === "number") supCache.balance = r.balance;
-        results.push({ idx, accounts: accounts.slice(0, it.qty), supplierOrderId: so.id, totalIDR: so.total, currency: so.currency });
+        // Old orders linked to the removed TokoPremium supplier can't be bought automatically any more
+        throw new Error("This item was linked to a supplier that has been removed — deliver it manually (type the account in the order).");
       } catch (e) {
         results.push({ idx, error: e.message });
       }
@@ -540,7 +482,6 @@ async function supplierDeliver(orderId) {
     item.deliveredAt = new Date().toISOString();
     item.supplierOrderId = r.supplierOrderId;
     delete item.supplierError; delete item.supplierErrorAt;
-    if (typeof r.totalIDR === "number") item.cost = r4(r.totalIDR / supRate(SITE, r.currency) / item.qty); // real buying price in USD
     texts.push(deliveryText(item));
   }
   if (texts.length) finishDelivery(cur, texts);
@@ -557,10 +498,10 @@ async function retrySupplierOrders({ onlyStale = false } = {}) {
   for (const id of ids) await supplierDeliver(id);
   return ids.length;
 }
-// Paid orders stuck on a supplier problem (e.g. empty TokoPremium balance) are retried every minute,
+// Paid orders stuck on a supplier problem (e.g. empty PixelSub balance) are retried every minute,
 // so they deliver by themselves as soon as the balance is topped up or stock is back.
 let autoRetryRunning = false;
-if (supKey() || pxKey()) setInterval(async () => {
+if (pxKey()) setInterval(async () => {
   if (autoRetryRunning) return;
   autoRetryRunning = true;
   try { await retrySupplierOrders({ onlyStale: true }); } catch (e) { console.error("Supplier auto-retry:", e.message); }
@@ -1214,7 +1155,7 @@ async function adminUpdate(req, res, id) {
         const sup = missing.filter((i) => i.supplier), own = missing.filter((i) => !i.supplier);
         warning = "Not delivered yet: " + [
           own.length ? `no stock for ${own.map((i) => `${i.name} (${i.plan}) ×${i.qty}`).join(", ")} — add stock (it delivers automatically) or type the details` : "",
-          sup.length ? `TokoPremium order failed for ${sup.map((i) => `${i.name} (${i.plan})`).join(", ")}: ${sup.map((i) => i.supplierError || "no response").join("; ")} — fix it (e.g. top up your TokoPremium balance) and press Retry` : "",
+          sup.length ? `PixelSub order failed for ${sup.map((i) => `${i.name} (${i.plan})`).join(", ")}: ${sup.map((i) => i.supplierError || "no response").join("; ")} — fix it (e.g. top up your PixelSub balance) and press Retry` : "",
         ].filter(Boolean).join(". ") + ".";
       }
     }
@@ -1296,9 +1237,9 @@ function cleanProduct(b, CATEGORIES) {
     if (!v.pkg || !v.duration) return { error: `${n}: package and duration are required.` };
     if (seen.has(v.pkg + "|" + v.duration)) return { error: `${n}: "${v.pkg} – ${v.duration}" is listed twice.` };
     seen.add(v.pkg + "|" + v.duration);
-    if (x.source && (x.source.type === "tokopremium" || x.source.type === "pixelsub")) {
-      // Linked to the supplier: price comes from supplier price + markup
-      const stype = x.source.type, sname = stype === "pixelsub" ? "PixelSub API" : "TokoPremium";
+    if (x.source && x.source.type === "pixelsub") {
+      // Linked to PixelSub: price and stock come straight from PixelSub
+      const stype = "pixelsub", sname = "PixelSub API";
       let markup = Number(x.source.markup), rm = x.source.resellerMarkup;
       if (stype === "pixelsub") { markup = 0; rm = null; } // PixelSub plans: no markup, price = PixelSub price
       const resellerMarkup = rm === "" || rm === null || rm === undefined ? null : Number(rm);
@@ -1553,22 +1494,10 @@ async function adminExpense(req, res, action) {
   send(res, 200, { ok: true });
 }
 
-/* ---------- Admin: supplier (TokoPremium) ---------- */
+/* ---------- Admin: supplier (PixelSub API) ---------- */
 async function adminSupplier(req, res) {
-  await refreshSupplier(15_000);
-  const { SITE, PRODUCTS } = catalog();
-  let balance = null, balanceCurrency = supCache.currency, mode = "", balanceError = "";
-  if (supKey()) {
-    try {
-      const b = await supRequest("GET", "/balance");
-      balance = b.balance; balanceCurrency = b.currency || balanceCurrency; mode = b.mode || "";
-      supCache.balance = balance; supCache.mode = mode;
-    } catch (e) { balanceError = e.message; }
-  }
-  const links = {};
-  for (const p of PRODUCTS) for (const v of p.variants) if (v.source && v.source.type !== "pixelsub") (links[v.source.variantId] = links[v.source.variantId] || []).push({ slug: p.slug, name: p.name, plan: `${v.pkg} – ${v.duration}` });
-  const rate = supRate(SITE);
-  // Second supplier: PixelSub API (USD)
+  await refreshPx(15_000);
+  const { PRODUCTS } = catalog();
   let pxBalance = null, pxBalanceError = "";
   if (pxKey()) {
     try {
@@ -1581,81 +1510,14 @@ async function adminSupplier(req, res) {
   }
   const pxLinks = {};
   for (const p of PRODUCTS) for (const v of p.variants) if (v.source && v.source.type === "pixelsub") (pxLinks[v.source.variantId] = pxLinks[v.source.variantId] || []).push({ slug: p.slug, name: p.name, plan: `${v.pkg} – ${v.duration}` });
-  const pixelsub = {
-    configured: !!pxKey(), balance: pxBalance, balanceError: pxBalanceError, error: pxCache.error,
-    updatedAt: pxCache.at ? new Date(pxCache.at).toISOString() : null,
-    products: pxCache.list.map((s) => ({ variant_id: s.id, product: s.name, variant: "", price: s.price, usd: s.price, stock: s.inStock ? (s.stock === null ? PX_UNLIMITED : s.stock) : 0,
-      available: s.inStock, linkedTo: pxLinks[s.id] || [] })),
-  };
-  // Everything is reported in USD for the admin; the supplier's own currency is kept for reference
   send(res, 200, {
-    pixelsub,
-    configured: !!supKey(), mode, balanceError,
-    balanceUsd: balance === null ? null : r2(balance / supRate(SITE, balanceCurrency)),
-    balanceOriginal: balance, balanceCurrency,
-    currency: supCache.currency, converted: rate !== 1, error: supCache.error, updatedAt: supCache.at ? new Date(supCache.at).toISOString() : null,
-    rate, rateMode: SITE.supplierRateMode === "manual" ? "manual" : "auto", liveRate: rateCache.rate, manualRate: Number(SITE.supplierRate) || 17900,
-    defaultMarkup: Number(SITE.supplierMarkup ?? 30), defaultResellerMarkup: SITE.supplierResellerMarkup ?? null,
-    products: supCache.list.map((s) => ({ ...s, usd: r4(s.price / rate), normalUsd: r4((s.normal_price || 0) / rate),
-      bulkUsd: s.bulk ? r4(s.bulk.price / rate) : null, linkedTo: links[s.variant_id] || [] })),
+    pixelsub: {
+      configured: !!pxKey(), balance: pxBalance, balanceError: pxBalanceError, error: pxCache.error,
+      updatedAt: pxCache.at ? new Date(pxCache.at).toISOString() : null,
+      products: pxCache.list.map((s) => ({ variant_id: s.id, product: s.name, variant: "", price: s.price, usd: s.price, stock: s.inStock ? (s.stock === null ? PX_UNLIMITED : s.stock) : 0,
+        available: s.inStock, linkedTo: pxLinks[s.id] || [] })),
+    },
   });
-}
-
-async function adminSupplierSettings(req, res) {
-  const b = await readBody(req);
-  const cat = JSON.parse(JSON.stringify(catalog()));
-  const mode = b.rateMode === "manual" ? "manual" : "auto";
-  const rate = b.rate === "" || b.rate === undefined ? Number(cat.SITE.supplierRate) || 17900 : Number(b.rate), markup = Number(b.markup);
-  const rm = b.resellerMarkup === "" || b.resellerMarkup === null || b.resellerMarkup === undefined ? null : Number(b.resellerMarkup);
-  if (!(rate >= 1 && rate <= 10_000_000)) return send(res, 400, { error: "Rate: how many IDR = 1 USD (e.g. 17900)." });
-  if (!(markup >= 0 && markup <= 1000)) return send(res, 400, { error: "Default markup must be between 0 and 1000%." });
-  if (rm !== null && !(rm >= 0 && rm <= markup)) return send(res, 400, { error: "Reseller markup must be between 0 and the normal markup." });
-  Object.assign(cat.SITE, { supplierRateMode: mode, supplierRate: r2(rate), supplierMarkup: r2(markup), supplierResellerMarkup: rm === null ? null : r2(rm) });
-  saveCatalog(cat);
-  send(res, 200, { ok: true });
-}
-
-// Adds a supplier product (all or chosen variants) to the store as linked plans
-async function adminSupplierImport(req, res) {
-  const b = await readBody(req);
-  await refreshSupplier(15_000);
-  const cat = JSON.parse(JSON.stringify(catalog()));
-  const S = cat.SITE;
-  const ids = Array.isArray(b.variantIds) ? b.variantIds.map(String) : [];
-  const picked = supCache.list.filter((s) => ids.includes(s.variant_id));
-  if (!picked.length) return send(res, 400, { error: "Choose at least one TokoPremium product." });
-  if (!cat.CATEGORIES.includes(b.category)) return send(res, 400, { error: "Choose a category." });
-  const markup = b.markup === undefined || b.markup === "" ? Number(S.supplierMarkup ?? 30) : Number(b.markup);
-  const rm = b.resellerMarkup === undefined ? S.supplierResellerMarkup ?? null : b.resellerMarkup === "" || b.resellerMarkup === null ? null : Number(b.resellerMarkup);
-  if (!(markup >= 0 && markup <= 1000)) return send(res, 400, { error: "Markup must be between 0 and 1000%." });
-  if (rm !== null && !(rm >= 0 && rm <= markup)) return send(res, 400, { error: "Reseller markup must be between 0 and the normal markup." });
-
-  const slug = (String(b.slug || picked[0].product_slug).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "product").slice(0, 60);
-  let p = cat.PRODUCTS.find((x) => x.slug === slug);
-  const created = !p;
-  if (!p) {
-    const name = str(b.name, 80) || picked[0].product;
-    p = { slug, name, category: b.category, icon: name.slice(0, 1).toUpperCase(), color: "#2563eb", short: str(b.short, 300) || `${name} — instant delivery.`,
-      sold: 0, isNew: true, popular: false, terms: [], variants: [] };
-    const img = ["png", "webp"].map((e) => `assets/img/${slug}.${e}`).find((f) => fs.existsSync(path.join(root, f)));
-    if (img) p.image = img;
-    cat.PRODUCTS.push(p);
-  }
-  let added = 0;
-  for (const s of picked) {
-    if (p.variants.some((v) => v.source && v.source.type !== "pixelsub" && v.source.variantId === s.variant_id)) continue;
-    const pkg = s.account_type ? s.account_type[0].toUpperCase() + s.account_type.slice(1) : "Account";
-    let duration = str(s.variant, 40) || "Plan";
-    while (p.variants.some((v) => v.pkg === pkg && v.duration === duration)) duration += " ·";
-    const v = { pkg, duration, warranty: s.warranty_days ? `${s.warranty_days} Days` : "—", stock: 0,
-      source: { type: "tokopremium", variantId: s.variant_id, markup: r2(markup), resellerMarkup: rm === null ? null : r2(rm) } };
-    const q = supplierQuote(v, S);
-    Object.assign(v, { price: q ? q.price : 0.01, bulkPrice: q ? q.bulkPrice : null, cost: q ? q.cost : null });
-    p.variants.push(v);
-    added++;
-  }
-  saveCatalog(cat);
-  send(res, 200, { ok: true, slug: p.slug, created, added });
 }
 
 // Adds PixelSub API products to the store as linked plans. Each one becomes its own product
@@ -1789,8 +1651,6 @@ async function api(req, res, url) {
     if (route === "GET admin/health") return send(res, 200, { dataDir: storeDir, dataAtRisk });
     if (route === "GET admin/catalog") { await refreshSupplier(30_000); return send(res, 200, liveCatalog()); }
     if (route === "GET admin/supplier") return adminSupplier(req, res);
-    if (route === "POST admin/supplier/settings") return adminSupplierSettings(req, res);
-    if (route === "POST admin/supplier/import") return adminSupplierImport(req, res);
     if (route === "POST admin/supplier/px-import") return adminPxImport(req, res);
     if (route === "POST admin/supplier/retry") return send(res, 200, { retried: await retrySupplierOrders() });
     if (req.method === "POST" && parts[2] === "orders" && parts[4] === "supplier-retry" && parts.length === 5) {
@@ -1822,7 +1682,7 @@ async function api(req, res, url) {
     if (route === "POST admin/stock") {
       const body = await readBody(req);
       const plan = findPlan(catalog().PRODUCTS, String(body.key || ""));
-      if (!plan || plan.v.manual || plan.v.source) return send(res, 400, { error: "Choose an automatic-delivery plan (not manual or TokoPremium)." });
+      if (!plan || plan.v.manual || plan.v.source) return send(res, 400, { error: "Choose an automatic-delivery plan (not manual or PixelSub)." });
       const lines = String(body.items || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean).slice(0, 2000);
       if (!lines.length) return send(res, 400, { error: "Paste at least one account (one per line)." });
       const stock = loadStock();

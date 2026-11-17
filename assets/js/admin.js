@@ -221,7 +221,7 @@ async function adminProducts(ctx) {
           const linked = p.variants.some((v) => v.source);
 return `<tr data-slug="${esc(p.slug)}">
             <td>${productIcon(p, "sm")}</td>
-            <td><b>${esc(p.name)}</b>${p.isNew ? ' <span class="tag tag-new">New</span>' : ""}${linked ? ' <span class="tag tag-sup">🔗 TokoPremium</span>' : ""}<br><span class="muted small">${esc(p.slug)}</span></td>
+            <td><b>${esc(p.name)}</b>${p.isNew ? ' <span class="tag tag-new">New</span>' : ""}${linked ? ' <span class="tag tag-sup">🔗 PixelSub</span>' : ""}<br><span class="muted small">${esc(p.slug)}</span></td>
             <td class="muted">${esc(p.category)}</td>
             <td>${p.variants.length}</td>
             <td class="${noCost ? "bal-short" : "muted"}">${noCost ? "missing" : range(p.variants.map((v) => v.cost))}</td>
@@ -259,38 +259,26 @@ function productEditor(ctx, cat, stockOf) {
   p.variants.forEach((v) => (v.origKey = orig ? `${orig.slug}|${v.pkg}|${v.duration}` : ""));
   let slugTouched = !!orig;
 
-  const sup = ctx.supplier || { products: [], rate: 17900, defaultMarkup: 30, defaultResellerMarkup: null };
-  const pxProducts = ((sup.pixelsub && sup.pixelsub.products) || []);
+  const pxProducts = ((ctx.supplier && ctx.supplier.pixelsub && ctx.supplier.pixelsub.products) || []);
   const isPx = (src) => !!src && src.type === "pixelsub";
-  const supById = Object.fromEntries(sup.products.map((s) => [s.variant_id, s]));
   const pxById = Object.fromEntries(pxProducts.map((s) => [s.variant_id, s]));
-  const idr = (n) => "Rp " + Number(n).toLocaleString("en-US");
 
-  // Same formula as the server (supplierQuote) — preview only; the server recalculates on save and on every order
+  // PixelSub plans: price and stock are exactly PixelSub's (no markup) — preview only; the server recalculates on save and on every order
   const quote = (src) => {
-    const s = src && (isPx(src) ? pxById : supById)[src.variantId];
+    const s = isPx(src) && pxById[src.variantId];
     if (!s) return null;
-    const ceil2 = (n) => Math.max(0.01, Math.ceil(Math.round(n * 10000) / 100) / 100);
-    const cost = isPx(src) ? s.price : s.price / (sup.converted === false ? 1 : sup.rate); // USD
-    if (isPx(src)) { const p = Math.max(0.01, Math.round(cost * 10000) / 10000); return { s, cost: p, price: p, bulk: null }; } // no markup
-    const price = ceil2(cost * (1 + (Number(src.markup) || 0) / 100));
-    let bulk = src.resellerMarkup === "" || src.resellerMarkup === null || src.resellerMarkup === undefined ? null : ceil2(cost * (1 + Number(src.resellerMarkup) / 100));
-    if (bulk !== null && bulk >= price) bulk = null;
-    return { s, cost: Math.round(cost * 10000) / 10000, price, bulk };
+    const p = Math.max(0.01, Math.round(s.price * 10000) / 10000);
+    return { s, cost: p, price: p, bulk: null };
   };
 
   const supRow = (v, i) => {
-    const q = quote(v.source), px = isPx(v.source), sname = px ? "PixelSub API" : "TokoPremium";
-    const opts = px ? pxProducts.map((s) => `<option value="${esc(s.variant_id)}" ${v.source.variantId === s.variant_id ? "selected" : ""}>${esc(s.product)} — ${money(s.usd)} · stock ${s.stock >= 999 ? "∞" : s.stock}</option>`)
-      : sup.products.map((s) => `<option value="${esc(s.variant_id)}" ${v.source.variantId === s.variant_id ? "selected" : ""}>${esc(s.product)} · ${esc(s.variant)} — ${money(s.usd)} · stock ${s.stock}</option>`);
+    const q = quote(v.source);
+    const opts = pxProducts.map((s) => `<option value="${esc(s.variant_id)}" ${v.source.variantId === s.variant_id ? "selected" : ""}>${esc(s.product)} — ${money(s.usd)} · stock ${s.stock >= 999 ? "∞" : s.stock}</option>`);
     return `<tr class="sup-row" data-i="${i}"><td colspan="10">
       <div class="sup-link">
-        <span class="sup-tag">🔗 ${sname}</span>
+        <span class="sup-tag">🔗 PixelSub API</span>
         <select data-s="variantId"><option value="">— choose product —</option>${opts.join("")}</select>
-        ${px ? "" : `<label>Markup <input data-s="markup" type="number" min="0" max="1000" step="0.1" value="${v.source.markup ?? ""}" class="w-num">%</label>
-        <label>Reseller 2+ <input data-s="resellerMarkup" type="number" min="0" max="1000" step="0.1" value="${v.source.resellerMarkup ?? ""}" placeholder="—" class="w-num">%</label>`}
-        <span class="sup-preview">${q ? `${sname} <b>${money(q.cost)}</b>${!px && sup.converted !== false ? ` <span class="muted">(${idr(q.s.price)})</span>` : ""} → your price <b>${money(q.price)}</b>${q.bulk !== null ? ` · 2+ <b>${money(q.bulk)}</b>` : ""} · stock <b>${q.s.available ? q.s.stock : 0}</b>`
-          : (px ? pxProducts.length : sup.products.length) ? `Choose a ${sname} product` : `<span class="bal-short">Supplier not connected — see the Supplier page</span>`}</span>
+        <span class="sup-preview">${q ? `PixelSub price <b>${money(q.price)}</b> (site = same) · stock <b>${q.s.available ? q.s.stock : 0}</b>` : pxProducts.length ? "Choose a PixelSub product" : `<span class="bal-short">PixelSub not connected — see the Supplier page</span>`}</span>
       </div>
     </td></tr>`;
   };
@@ -299,16 +287,16 @@ function productEditor(ctx, cat, stockOf) {
     const key = `${p.slug}|${v.pkg}|${v.duration}`;
     const linked = !!v.source, q = linked ? quote(v.source) : null;
     const show = (k) => (q ? (k === "cost" ? q.cost : k === "price" ? q.price : q.bulk) : v[k]);
-    const mode = linked ? (isPx(v.source) ? "px" : "tp") : v.manual ? "manual" : "";
+    const mode = linked ? "px" : v.manual ? "manual" : "";
     return `<tr data-i="${i}" class="${linked ? "linked" : ""}">
       <td><input data-f="pkg" value="${esc(v.pkg || "")}" placeholder="Shared"></td>
       <td><input data-f="duration" value="${esc(v.duration || "")}" placeholder="1 Month"></td>
-      <td><input data-f="cost" type="number" step="0.01" min="0" value="${show("cost") ?? ""}" placeholder="0.00" ${linked ? "readonly title=\"From TokoPremium\"" : ""}></td>
-      <td><input data-f="price" type="number" step="0.01" min="0.01" value="${show("price") ?? ""}" placeholder="0.00" ${linked ? "readonly title=\"Supplier price + markup\"" : "required"}></td>
+      <td><input data-f="cost" type="number" step="0.01" min="0" value="${show("cost") ?? ""}" placeholder="0.00" ${linked ? "readonly title=\"From PixelSub\"" : ""}></td>
+      <td><input data-f="price" type="number" step="0.01" min="0.01" value="${show("price") ?? ""}" placeholder="0.00" ${linked ? "readonly title=\"PixelSub price\"" : "required"}></td>
       <td><input data-f="bulkPrice" type="number" step="0.01" min="0.01" value="${show("bulkPrice") ?? ""}" placeholder="optional" ${linked ? "readonly" : ""}></td>
       <td class="mg">${marginHtml(show("cost"), show("price"), show("bulkPrice"))}</td>
       <td><input data-f="warranty" value="${esc(v.warranty || "")}" placeholder="30 Days"></td>
-      <td><select data-f="delivery"><option value="">⚡ Auto (my stock)</option><option value="manual" ${mode === "manual" ? "selected" : ""}>Manual</option><option value="tp" ${mode === "tp" ? "selected" : ""}>🔗 TokoPremium</option><option value="px" ${mode === "px" ? "selected" : ""}>🔗 PixelSub API</option></select></td>
+      <td><select data-f="delivery"><option value="">⚡ Auto (my stock)</option><option value="manual" ${mode === "manual" ? "selected" : ""}>Manual</option><option value="px" ${mode === "px" ? "selected" : ""}>🔗 PixelSub API</option></select></td>
       <td>${linked ? `<span class="muted small">${q ? (q.s.available ? q.s.stock : 0) : 0} live</span>` : v.manual ? `<input data-f="stock" type="number" min="0" step="1" value="${v.stock ?? 0}" class="w-num">` : `<span class="muted small">${stockOf[v.origKey || key] || 0} in stock</span>`}</td>
       <td><button type="button" class="icon-btn" data-rmv aria-label="Remove plan">${ICON.trash}</button></td>
     </tr>${linked ? supRow(v, i) : ""}`;
@@ -382,9 +370,9 @@ function productEditor(ctx, cat, stockOf) {
         const k = inp.dataset.f;
         if (k === "delivery") {
           v.manual = inp.value === "manual";
-          const want = inp.value === "tp" ? "tokopremium" : inp.value === "px" ? "pixelsub" : "";
+          const want = inp.value === "px" ? "pixelsub" : "";
           if (want) {
-            if (!v.source || v.source.type !== want) v.source = { type: want, variantId: "", markup: sup.defaultMarkup, resellerMarkup: sup.defaultResellerMarkup };
+            if (!v.source || v.source.type !== want) v.source = { type: want, variantId: "", markup: 0, resellerMarkup: null };
           } else delete v.source;
         } else if (["cost", "price", "bulkPrice"].includes(k)) v[k] = inp.value === "" ? null : Number(inp.value);
         else if (k === "stock") v.stock = Number(inp.value) || 0;
@@ -451,24 +439,26 @@ function productEditor(ctx, cat, stockOf) {
   render();
 }
 
-/* ======================= Supplier (TokoPremium) ======================= */
+/* ======================= Supplier (PixelSub API) ======================= */
 async function adminSupplierView(ctx) {
   const { el, api, reload } = ctx;
   const [S, cat] = await Promise.all([api("/api/admin/supplier").then((r) => r.json()), api("/api/admin/catalog").then((r) => r.json())]);
-  const idr = (n) => "Rp " + Number(n).toLocaleString("en-US");
-  const ceil2 = (n) => Math.max(0.01, Math.ceil(Math.round(n * 10000) / 100) / 100);
 
-  // Second supplier: PixelSub API (prices in USD). Plans are linked to it in Products → Delivery.
+  // PixelSub API (prices in USD). The site shows exactly PixelSub's price and stock; new products are added automatically.
   const PX = S.pixelsub || { configured: false, products: [] };
-  const pxHtml = !PX.configured ? `<div class="card panel">
-      <h3>PixelSub API supplier</h3>
+  if (!PX.configured) {
+    el.innerHTML = `<div class="card panel">
+      <h3>Connect PixelSub API</h3>
       <p>Add the key to the server's <code>.env</code> file (or Railway variables) and restart:</p>
       <pre class="code">PIXELSUB_API_KEY=...</pre>
-      <p class="muted small">Then in Products, set a plan's Delivery to "🔗 PixelSub API" and pick the product.</p>
-    </div>` : `<div class="card panel">
-      <h3>PixelSub API supplier</h3>
+      <p class="muted small">Then every PixelSub product appears on the site automatically, with PixelSub's own price and stock (no markup).</p>
+    </div>`;
+    return;
+  }
+  el.innerHTML = `<div class="card panel">
+      <div class="pe-plans-head"><h3>PixelSub API supplier</h3><button class="btn btn-outline" id="sup-retry">↻ Retry failed supplier orders</button></div>
       <p class="muted small">Balance: <b>${PX.balance === null ? "—" : money(PX.balance)}</b> · ${PX.products.length} products · ${PX.products.filter((s) => s.available).length} in stock${PX.updatedAt ? " · updated " + fmtDate(PX.updatedAt) : ""}.
-      Link a plan in Products → Delivery → "🔗 PixelSub API".</p>
+      The site shows PixelSub's price and stock exactly (no markup). New PixelSub products are added to the store automatically.</p>
       ${PX.error ? `<div class="form-error">PixelSub API error: ${esc(PX.error)}</div>` : ""}${PX.balanceError ? `<div class="form-error">Balance: ${esc(PX.balanceError)}</div>` : ""}
       <form class="sup-import" id="px-import">
         <span>Add selected to my store →</span>
@@ -484,113 +474,20 @@ async function adminSupplierView(ctx) {
       </table></div>
     </div>`;
 
-  const bindPx = () => {
-    const form = $("#px-import", el);
-    if (!form) return;
-    const boxes = $$("[data-px]", el), btn = $("#px-add", el);
-    const sync = () => { const n = boxes.filter((b) => b.checked).length; btn.disabled = !n; btn.textContent = `Add ${n} selected`; };
-    boxes.forEach((b) => b.addEventListener("change", sync));
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const f = e.target;
-      btn.disabled = true; btn.textContent = "Adding…";
-      const { ok, data } = await jsonPost(api, "/api/admin/supplier/px-import", { ids: boxes.filter((b) => b.checked).map((b) => b.dataset.px), category: f.category.value, group: f.group.value });
-      toast(ok ? `Added ${data.added} plan(s) (${data.created} new product(s)) — live on the site. Edit names, logos and terms in Products.` : esc(data.error || "Failed"));
-      reload();
-    });
-  };
-
-  if (!S.configured) {
-    el.innerHTML = `<div class="card panel">
-      <h3>Connect TokoPremium</h3>
-      <p>Add your TokoPremium API key to the server's <code>.env</code> file and restart the server:</p>
-      <pre class="code">TOKOPREMIUM_API_KEY=tpk_...</pre>
-      <p class="muted small">Get the key from tokopremium.digital → My account → Reseller & API. Never paste it anywhere else.</p>
-    </div>${pxHtml}`;
-    bindPx();
-    return;
-  }
-
-  // Group supplier variants by product
-  const groups = {};
-  for (const s of S.products) (groups[s.product_slug] = groups[s.product_slug] || { name: s.product, slug: s.product_slug, category: s.category, items: [] }).items.push(s);
-
-  el.innerHTML = `
-    <div class="kpi-grid sup-kpis">
-      <div class="card kpi ${S.mode === "test" ? "" : "pos"}"><span>Connection</span><strong>${S.error ? "Error" : "Connected"}</strong><small>${S.mode ? `<span class="status ${S.mode === "test" ? "s-pending" : "s-delivered"}">${S.mode === "test" ? "TEST mode" : "LIVE"}</span>` : ""} ${S.updatedAt ? "updated " + fmtDate(S.updatedAt) : ""}</small></div>
-      <div class="card kpi"><span>TokoPremium balance</span><strong>${S.balanceUsd === null ? "—" : money(S.balanceUsd)}</strong><small>${S.balanceUsd === null ? esc(S.balanceError || "") : S.balanceCurrency === "USD" ? "USD" : `${esc(S.balanceCurrency)} ${Number(S.balanceOriginal).toLocaleString("en-US")} · converted`}</small></div>
-      <div class="card kpi"><span>Supplier products</span><strong>${S.products.length}</strong><small>${S.products.filter((s) => s.available).length} in stock</small></div>
-      <div class="card kpi"><span>Linked to your store</span><strong>${S.products.filter((s) => s.linkedTo.length).length}</strong><small>plans selling from TokoPremium</small></div>
-    </div>
-    ${S.error ? `<div class="form-error">TokoPremium error: ${esc(S.error)}</div>` : ""}
-    ${S.mode === "test" ? `<div class="notice">Your key is a <b>test key</b>: TokoPremium returns test data. Put your <b>live</b> key in <code>.env</code> to sell for real.</div>` : ""}
-
-    <form class="card panel sup-settings" id="sup-set">
-      <h3>Pricing</h3>
-      <div class="sup-set-grid">
-        <label>${S.converted ? "IDR → USD rate" : "Conversion (not used: TokoPremium sends USD)"}<select name="rateMode"><option value="auto" ${S.rateMode === "auto" ? "selected" : ""}>Auto — same as TokoPremium${S.liveRate ? ` (1 USD = ${Number(S.liveRate).toLocaleString("en-US")} IDR)` : ""}</option><option value="manual" ${S.rateMode === "manual" ? "selected" : ""}>Manual</option></select><input name="rate" type="number" min="1" step="1" value="${S.manualRate}" placeholder="1 USD = ? IDR" ${S.rateMode === "auto" ? "hidden" : ""}></label>
-        <label>Default markup (1 pc)<span class="inp-suffix"><input name="markup" type="number" min="0" max="1000" step="0.1" value="${S.defaultMarkup}" required>%</span></label>
-        <label>Default reseller markup (2+)<span class="inp-suffix"><input name="resellerMarkup" type="number" min="0" max="1000" step="0.1" value="${S.defaultResellerMarkup ?? ""}" placeholder="none">%</span></label>
-        <button class="btn btn-primary">Save</button>
-      </div>
-      <p class="muted small">All amounts are shown in USD${S.converted ? ` (IDR ÷ ${S.rateMode === "auto" ? "TokoPremium rate" : "your rate"})` : ""}. Your price = TokoPremium price${S.converted ? " in USD" : ""} × (1 + markup%). It updates by itself when TokoPremium changes its price. Each plan can have its own markup in Products.</p>
-    </form>
-
-    <div class="card panel">
-      <div class="pe-plans-head"><h3>TokoPremium catalogue</h3><button class="btn btn-outline" id="sup-retry">↻ Retry failed supplier orders</button></div>
-      <form class="sup-import" id="sup-import">
-        <span>Add selected to my store →</span>
-        <select name="category">${cat.CATEGORIES.map((c) => `<option>${esc(c)}</option>`).join("")}</select>
-        <span class="inp-suffix">markup <input name="markup" type="number" min="0" max="1000" step="0.1" value="${S.defaultMarkup}">%</span>
-        <span class="inp-suffix">reseller <input name="resellerMarkup" type="number" min="0" max="1000" step="0.1" value="${S.defaultResellerMarkup ?? ""}" placeholder="—">%</span>
-        <button class="btn btn-primary" id="sup-add" disabled>Add 0 selected</button>
-      </form>
-      <div class="table-wrap">
-        <table class="sup-table">
-          <thead><tr><th></th><th>Product</th><th>Variant</th><th>TokoPremium price</th><th>Your price (default %)</th><th>Stock</th><th>In your store</th></tr></thead>
-          <tbody>${Object.values(groups).map((g) => g.items.map((s, i) => `
-            <tr class="${s.available ? "" : "muted"}">
-              <td>${s.linkedTo.length ? "" : `<input type="checkbox" data-v="${esc(s.variant_id)}" data-g="${esc(g.slug)}">`}</td>
-              <td>${i === 0 ? `<b>${esc(g.name)}</b><br><span class="muted small">${esc(g.category || "")}</span>` : ""}</td>
-              <td>${esc(s.variant)}<br><span class="muted small">${s.warranty_days ? s.warranty_days + "-day warranty" : "no warranty"}${s.bulk ? ` · ${s.bulk.min_qty}+ = ${money(s.bulkUsd)}` : ""}</span></td>
-              <td><b>${money(s.usd)}</b>${s.normal_price > s.price ? ` <span class="muted small"><s>${money(s.normalUsd)}</s></span>` : ""}${S.converted ? `<br><span class="muted small">${idr(s.price)}</span>` : ""}</td>
-              <td><b>${money(ceil2(s.usd * (1 + S.defaultMarkup / 100)))}</b></td>
-              <td>${s.available ? `<b>${s.stock}</b>` : '<span class="bal-short">out</span>'}</td>
-              <td>${s.linkedTo.length ? s.linkedTo.map((l) => `<a href="#products" data-editp="${esc(l.slug)}">${esc(l.name)}</a><br><span class="muted small">${esc(l.plan)}</span>`).join("<br>") : '<span class="muted small">—</span>'}</td>
-            </tr>`).join("")).join("")}</tbody>
-        </table>
-      </div>
-    </div>${pxHtml}`;
-
-  bindPx();
-  $("#sup-set", el).rateMode.addEventListener("change", (e) => { $("#sup-set", el).rate.hidden = e.target.value === "auto"; });
-  $("#sup-set", el).addEventListener("submit", async (e) => {
+  const boxes = $$("[data-px]", el), btn = $("#px-add", el);
+  const sync = () => { const n = boxes.filter((b) => b.checked).length; btn.disabled = !n; btn.textContent = `Add ${n} selected`; };
+  boxes.forEach((b) => b.addEventListener("change", sync));
+  $("#px-import", el).addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = e.target;
-    const { ok, data } = await jsonPost(api, "/api/admin/supplier/settings", { rateMode: f.rateMode.value, rate: f.rate.value, markup: f.markup.value, resellerMarkup: f.resellerMarkup.value });
-    toast(ok ? "Saved — prices updated on the site" : esc(data.error || "Failed"));
-    if (ok) reload();
+    btn.disabled = true; btn.textContent = "Adding…";
+    const { ok, data } = await jsonPost(api, "/api/admin/supplier/px-import", { ids: boxes.filter((b) => b.checked).map((b) => b.dataset.px), category: f.category.value, group: f.group.value });
+    toast(ok ? `Added ${data.added} plan(s) (${data.created} new product(s)) — live on the site. Edit names, logos and terms in Products.` : esc(data.error || "Failed"));
+    reload();
   });
   $("#sup-retry", el).addEventListener("click", async () => {
     const { ok, data } = await jsonPost(api, "/api/admin/supplier/retry", {});
     toast(ok ? (data.retried ? `Retried ${data.retried} order(s) — check Orders` : "No failed supplier orders") : esc(data.error || "Failed"));
-  });
-  const boxes = $$("[data-v]", el), addBtn = $("#sup-add", el);
-  const sync = () => { const n = boxes.filter((b) => b.checked).length; addBtn.disabled = !n; addBtn.textContent = `Add ${n} selected`; };
-  boxes.forEach((b) => b.addEventListener("change", sync));
-  $("#sup-import", el).addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const f = e.target, byGroup = {};
-    boxes.filter((b) => b.checked).forEach((b) => (byGroup[b.dataset.g] = byGroup[b.dataset.g] || []).push(b.dataset.v));
-    addBtn.disabled = true; addBtn.textContent = "Adding…";
-    let added = 0, products = 0, err = "";
-    for (const [slug, variantIds] of Object.entries(byGroup)) {
-      const { ok, data } = await jsonPost(api, "/api/admin/supplier/import", { slug, variantIds, category: f.category.value, markup: f.markup.value, resellerMarkup: f.resellerMarkup.value });
-      if (!ok) { err = data.error || "Failed"; break; }
-      added += data.added; products++;
-    }
-    toast(err ? esc(err) : `Added ${added} plan(s) in ${products} product(s) — live on the site. Edit them in Products to add a logo.`);
-    reload();
   });
   $$("[data-editp]", el).forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); prodState.editing = a.dataset.editp; $('[data-sec="products"]').click(); }));
 }

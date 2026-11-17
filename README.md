@@ -34,22 +34,19 @@ All prices are in **US dollars** and paid 1:1 in USDT. Three methods, all confir
 - Plans with `manual: true` in `data.js` (invites / activation on the customer's own email or number) are never auto-delivered — paste the details in the order yourself.
 - Stock lives in `storage/stock.json` (private). Stock is matched by product slug + package + duration, so renaming a plan in `data.js` needs its stock re-added.
 
-## Supplier: TokoPremium (live stock + automatic buying)
-Set `TOKOPREMIUM_API_KEY` in `.env` and restart. Then in **Admin → Supplier**:
-- See connection status (TEST / LIVE), your **TokoPremium balance** (IDR and ≈ USD) and their full catalogue with live price & stock.
-- **Pricing:** `1 USD = … IDR` rate, default markup % (1 pc) and default reseller markup % (2+).
-- Tick products → **Add selected to my store** (choose category and markup). They appear on the site immediately; add a logo in Products.
-- **Retry failed supplier orders** button.
-
-In **Admin → Products**, any plan can be set to Delivery = **🔗 TokoPremium**: pick the TokoPremium product and its own markup %. Price fields become automatic:
-`your price = TokoPremium price ÷ rate × (1 + markup%)` (reseller 2+ uses the reseller markup). When TokoPremium changes its price, yours follows with the same %.
+## Supplier: PixelSub API (live price & stock, no markup)
+Set `PIXELSUB_API_KEY` in `.env` (the same PixelSub account your Telegram bot uses) and restart.
+- **No markup:** the site shows exactly the price and stock PixelSub returns. Any price calculation (reseller discounts etc.) is done in the PixelSub admin panel, not here.
+- **Auto-add:** every PixelSub product is added to the store automatically (a plan linked to it, name/duration guessed from its title, category guessed from keywords). Products you delete are not added again. Set `PIXELSUB_AUTO_ADD=0` to turn this off.
+- **Admin → Supplier:** PixelSub balance and the full catalogue with live price & stock; you can also add products by hand and press **Retry failed supplier orders**.
+- Edit names, logos and terms in **Admin → Products** (a PixelSub-linked plan's price and stock are read-only).
 
 How it works:
-- The server refreshes TokoPremium's price & stock every minute, and again (≤ 30 s old) right before pricing an order. The site shows their **live stock**; customers can't order more than they have.
-- When an order is paid (Binance / Bybit / Cryptomus / balance / admin approval), the server **buys from TokoPremium** (`POST /orders`, paid from your TokoPremium balance) and delivers the returned accounts instantly. Each order line uses an `Idempotency-Key` (`<order id>-<line>`), so a retry can never buy twice.
-- If TokoPremium refuses (e.g. not enough balance, out of stock), the order stays "Payment verified" and Admin → Orders shows **"TokoPremium order failed: …"** with **↻ Retry TokoPremium order**.
-- The real TokoPremium price is saved as the order's cost, so the Dashboard profit is exact.
-- Cost prices, supplier links and the IDR rate are never sent to customers.
+- The server refreshes PixelSub's price & stock every minute, and again (≤ 30 s old) right before pricing an order. Customers can't order more than PixelSub has.
+- When an order is paid (Binance / Bybit / Cryptomus / balance / admin approval), the server **buys from PixelSub** (`POST /orders`, paid from your PixelSub balance) and delivers the returned accounts instantly. Each order line sends a `reference` (`<order id>-<line>`).
+- If PixelSub refuses (e.g. not enough balance, out of stock), the order stays "Payment verified" and Admin → Orders shows the error with a **Retry** button; failed orders are also retried automatically every minute.
+- The PixelSub price is saved as the order's cost.
+- Cost prices and supplier links are never sent to customers.
 
 ## Hosting
 Because orders are saved on the server, the site needs **Node.js hosting** (a VPS, cPanel "Setup Node.js App", Render, Railway…). Static-only hosts (Netlify/GitHub Pages) can't save orders.
