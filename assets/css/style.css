@@ -118,6 +118,7 @@ h1, h2, h3, h4 { color: var(--ink); line-height: 1.2; letter-spacing: -.02em; }
   box-shadow: 0 20px 40px rgba(0,0,0,.18); animation: bob 5s ease-in-out infinite;
 }
 .float span { width: 70%; height: 70%; border-radius: 16px; display: grid; place-items: center; background: var(--c); font-size: 22px; }
+.float-white { background: #fff; border-color: #fff; backdrop-filter: none; }
 .float span img { width: 100%; height: 100%; object-fit: contain; display: block; border-radius: inherit; }
 .f1 { width: 110px; height: 110px; left: 8%; top: 12%; }
 .f2 { width: 92px; height: 92px; right: 10%; top: 4%; animation-delay: -1.5s; }
