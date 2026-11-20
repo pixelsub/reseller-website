@@ -13,6 +13,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const crypto = require("crypto");
+const dns = require("dns");
 
 const root = __dirname;
 const port = process.env.PORT || 5173;
@@ -627,7 +628,7 @@ const isAdmin = (req) => {
 };
 
 /* ---------- Reseller accounts & sessions ---------- */
-// Anyone who signs up is a reseller and gets the 2+ price. Guests can order at the 1 pc price.
+// Ordering needs an account. Buyer accounts ("member") pay the 1 pc price; approved resellers get the 2+ price.
 const usersFile = path.join(storeDir, "users.json");
 const sessionsFile = path.join(storeDir, "sessions.json");
 const SESSION_DAYS = 30;
@@ -666,8 +667,16 @@ function startSession(req, res, username) {
   const secure = req.headers["x-forwarded-proto"] === "https" || req.socket.encrypted ? "; Secure" : "";
   res.setHeader("Set-Cookie", `ps_session=${token}; HttpOnly; Path=/; Max-Age=${SESSION_DAYS * 86400}; SameSite=Lax${secure}`);
 }
+function endSessionsOf(username) {
+  const sessions = readJson(sessionsFile, {});
+  for (const [k, s] of Object.entries(sessions)) if (s.username === username) delete sessions[k];
+  writeJson(sessionsFile, sessions);
+}
+// 10 characters, no look-alikes (0/o, 1/l/i) so it's easy to type from a chat message
+const tempPassword = () => { const a = "abcdefghjkmnpqrstuvwxyz23456789"; return Array.from(crypto.randomBytes(10), (x) => a[x % a.length]).join(""); };
 const publicUser = (u) => ({
   username: u.username, status: userStatus(u), reseller: isReseller(u), balance: u.balance || 0, createdAt: u.createdAt,
+  tempPassword: !!u.tempPassword,
   application: u.application ? { type: u.application.type, link: u.application.link, note: u.application.note || "", contact: u.application.contact || "",
     submittedAt: u.application.submittedAt, rejectNote: u.rejectNote || "" } : null,
 });
@@ -687,6 +696,7 @@ function failedAttempt(req) {
 /* ---------- Reseller applications ---------- */
 // Anyone can create an account, but it only becomes a reseller (reseller price + wallet) after the admin
 // approves the application. Accounts created before this feature (no status) count as approved.
+// Status: "member" (buyer, never applied) → "pending" (applied) → "approved" / "rejected".
 const userStatus = (u) => u.status || "approved";
 const isReseller = (u) => !!u && !u.disabled && userStatus(u) === "approved";
 const APP_TYPES = { website: "Website / online store", bot: "Telegram / WhatsApp bot", other: "Facebook page / group / other" };
@@ -723,22 +733,51 @@ function signupLimited(req) {
   return ++h.n > 10;
 }
 
+// New accounts sign up with their email; it is stored as the account's `username`
+// (older accounts keep their plain username and still log in with it).
+const EMAIL_RE = /^[a-z0-9_%+-]+(\.[a-z0-9_%+-]+)*@([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}$/;
+const emailDomainCache = new Map(); // domain -> { ok, at }
+const dnsResolver = new dns.promises.Resolver({ timeout: 3000, tries: 2 });
+// The domain must exist and accept mail (MX record, or an address record as the fallback mail host).
+// If our own DNS lookup fails (timeout, no network) the email is allowed rather than blocking signups.
+async function emailDomainOk(domain) {
+  const hit = emailDomainCache.get(domain);
+  if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.ok;
+  let ok = true;
+  try {
+    const mx = await dnsResolver.resolveMx(domain);
+    ok = mx.some((r) => r.exchange && r.exchange !== "."); // a "null MX" means the domain takes no mail
+  } catch (e) {
+    if (e.code === "ENOTFOUND") ok = false;
+    else if (e.code === "ENODATA") ok = await dnsResolver.resolve4(domain).then((a) => a.length > 0, (e2) => !["ENOTFOUND", "ENODATA"].includes(e2.code));
+  }
+  emailDomainCache.set(domain, { ok, at: Date.now() });
+  return ok;
+}
+const validEmail = (email) => EMAIL_RE.test(email) && email.length <= 254 && email.split("@")[0].length <= 64;
+
 async function signup(req, res) {
   const body = await readBody(req);
-  const username = str(body.username, 30).toLowerCase();
+  const username = str(body.email, 254).toLowerCase();
   const password = typeof body.password === "string" ? body.password : "";
-  if (!/^[a-z0-9_.]{3,30}$/.test(username)) return send(res, 400, { error: "Username: 3–30 letters, numbers, _ or ." });
+  if (!username) return send(res, 400, { error: "Enter your email address." });
+  if (!validEmail(username)) return send(res, 400, { error: "Enter a valid email address (e.g. name@gmail.com)." });
   if (password.length < 6 || password.length > 200) return send(res, 400, { error: "Password must be at least 6 characters." });
   if (tooManyAttempts(req) || signupLimited(req)) return send(res, 429, { error: "Too many attempts. Try again later." });
+  const domain = username.split("@")[1];
+  if (!(await emailDomainOk(domain))) return send(res, 400, { error: `“${domain}” doesn't receive email — check the spelling of your email.` });
   const users = readJson(usersFile, []);
-  if (users.some((u) => u.username === username)) return send(res, 400, { error: "This username is taken." });
-  const app = parseApplication(body, users, null);
+  if (users.some((u) => u.username === username)) return send(res, 400, { error: "An account with this email already exists. Log in instead." });
+  // Free buyer account when no "where do you sell" is sent; otherwise it's a reseller application
+  const applying = body.type !== undefined || body.link !== undefined;
+  const app = applying ? parseApplication(body, users, null) : {};
   if (app.error) return send(res, 400, { error: app.error });
-  const u = { username, ...hashPassword(password), createdAt: new Date().toISOString(), status: "pending", application: app.application };
+  const u = { username, ...hashPassword(password), createdAt: new Date().toISOString(),
+    ...(applying ? { status: "pending", application: app.application } : { status: "member" }) };
   users.push(u);
   writeJson(usersFile, users);
   startSession(req, res, username);
-  console.log(`New reseller application: ${username} (${app.application.type}: ${app.application.link})`);
+  console.log(applying ? `New reseller application: ${username} (${app.application.type}: ${app.application.link})` : `New buyer account: ${username}`);
   send(res, 201, publicUser(u));
 }
 
@@ -774,11 +813,12 @@ async function adminReviewApplication(req, res, username) {
 async function login(req, res) {
   const body = await readBody(req);
   if (tooManyAttempts(req)) return send(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
-  const username = str(body.username, 30).toLowerCase();
+  // Email for new accounts; older accounts can still enter their username
+  const username = str(body.email !== undefined ? body.email : body.username, 254).toLowerCase();
   const u = readJson(usersFile, []).find((x) => x.username === username);
   if (!u || u.disabled || !checkPassword(String(body.password || ""), u)) {
     failedAttempt(req);
-    return send(res, 401, { error: "Wrong username or password." });
+    return send(res, 401, { error: "Wrong email or password." });
   }
   startSession(req, res, username);
   send(res, 200, publicUser(u));
@@ -846,23 +886,24 @@ function metaPurchase(order) {
 /* ---------- API ---------- */
 async function createOrder(req, res) {
   const body = await readBody(req, 3_000_000); // room for a payment screenshot
+  // No guest checkout: every order belongs to an account (free buyer account or reseller)
+  const user = sessionUser(req);
+  if (!user) return send(res, 401, { error: "Please log in or create a free account to place your order." });
   // Supplier-linked items: make sure price & stock are fresh (≤ 30 s old) before pricing the order
   if (Array.isArray(body.items) && catalog().PRODUCTS.some((p) => body.items.some((it) => it && it.slug === p.slug && p.variants[it.vi] && p.variants[it.vi].source))) {
     await refreshSupplier(30_000);
   }
   const { SITE, PRODUCTS } = liveCatalog();
   const bulkMin = SITE.bulkMinQty || 2;
-  const user = sessionUser(req);
 
   const reseller = isReseller(user);
-  const customer = user ? { username: user.username, reseller } : { guest: true };
+  const customer = { username: user.username, reseller };
   const payment = {
     method: str(body.pay, 40),
     sender: str(body.sender, 40),
     trx: str(body.trx, 60),
   };
   const useBalance = payment.method === "Balance";
-  if (useBalance && !user) return send(res, 401, { error: "Log in to pay with your balance." });
   if (useBalance && !reseller) return send(res, 403, { error: "Paying from balance is for approved resellers." });
   if (!useBalance && !SITE.payments.includes(payment.method)) return send(res, 400, { error: "Choose a payment method." });
   const info = (SITE.paymentInfo || {})[payment.method] || {};
@@ -1103,9 +1144,25 @@ async function changePassword(req, res) {
   const next = typeof body.next === "string" ? body.next : "";
   if (next.length < 6 || next.length > 200) return send(res, 400, { error: "New password must be at least 6 characters." });
   const users = readJson(usersFile, []);
-  Object.assign(users.find((x) => x.username === u.username), hashPassword(next));
+  const me = users.find((x) => x.username === u.username);
+  Object.assign(me, hashPassword(next));
+  delete me.tempPassword; // they chose their own password after an admin reset
   writeJson(usersFile, users);
   send(res, 200, { ok: true });
+}
+
+// Forgot password: the admin makes a temporary password and sends it to the customer (Telegram / WhatsApp).
+// The account is logged out everywhere; after logging in with it the site asks them to choose their own.
+function adminResetPassword(req, res, username) {
+  const users = readJson(usersFile, []);
+  const u = users.find((x) => x.username === username);
+  if (!u) return send(res, 404, { error: "Account not found." });
+  const password = tempPassword();
+  Object.assign(u, hashPassword(password), { tempPassword: true, passwordResetAt: new Date().toISOString() });
+  writeJson(usersFile, users);
+  endSessionsOf(username);
+  console.log(`Password reset by admin: ${username}`);
+  send(res, 200, { password });
 }
 
 async function getOrder(req, res, id, token) {
@@ -1644,7 +1701,10 @@ async function api(req, res, url) {
     if (req.method === "POST" && parts[2] === "orders" && parts[4] === "delete" && parts.length === 5) return adminDeleteOrder(req, res, parts[3]);
     if (req.method === "POST" && parts[2] === "orders" && parts.length === 4) return adminUpdate(req, res, parts[3]);
 
-    if (req.method === "POST" && parts[2] === "users" && parts[4] === "review" && parts.length === 5) return adminReviewApplication(req, res, parts[3]);
+    // Account in the URL is encoded (emails contain "@")
+    const userParam = () => { try { return decodeURIComponent(parts[3]); } catch { return ""; } };
+    if (req.method === "POST" && parts[2] === "users" && parts[4] === "review" && parts.length === 5) return adminReviewApplication(req, res, userParam());
+    if (req.method === "POST" && parts[2] === "users" && parts[4] === "reset-password" && parts.length === 5) return adminResetPassword(req, res, userParam());
     if (route === "GET admin/topups") return send(res, 200, loadTopups());
     if (req.method === "GET" && parts[2] === "proofs" && parts.length === 4) return adminProof(res, parts[3]);
 
@@ -1731,7 +1791,7 @@ async function api(req, res, url) {
       const amount = Math.round(Number(body.amount) * 100) / 100;
       if (!Number.isFinite(amount) || amount === 0) return send(res, 400, { error: "Enter an amount (use minus to deduct)." });
       try {
-        const balance = walletApply(parts[3], amount, "adjust", str(body.note, 200) || "Adjusted by admin", "admin");
+        const balance = walletApply(userParam(), amount, "adjust", str(body.note, 200) || "Adjusted by admin", "admin");
         return send(res, 200, { balance });
       } catch (e) { return send(res, 400, { error: e.message }); }
     }

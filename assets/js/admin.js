@@ -119,7 +119,7 @@ async function adminDashboard({ el, api, reload }) {
       ${tile("Net profit", money(T.netProfit), "gross profit − expenses", T.netProfit >= 0 ? "pos hero" : "neg hero")}
     </div>
     <div class="kpi-grid small">
-      ${tile("Guest sales", money(T.guestRevenue))}
+      ${tile("Retail sales", money(T.guestRevenue), "buyers and guests, 1 pc price")}
       ${tile("Reseller sales", money(T.resellerRevenue), `${money(T.discounts)} given as reseller discount`)}
       ${tile("Balance top-ups", money(T.topups), "money received into reseller wallets")}
       ${tile("Reseller balances now", money(T.balances), "owed to resellers as credit")}

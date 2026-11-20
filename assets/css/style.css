@@ -412,6 +412,8 @@ select:focus, .checkout input:focus, .reseller-form input:focus { border-color: 
 .acct-note svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px; }
 .acct-note a { color: var(--primary); font-weight: 600; text-decoration: underline; }
 .acct-note.ok { background: var(--green-50); color: var(--green); }
+.login-gate { display: grid; gap: 10px; margin-top: 14px; }
+.login-gate p { font-size: 14px; margin: 0 0 4px; }
 .oc-hint a, .tier a { color: var(--primary); font-weight: 600; text-decoration: underline; }
 .save-link { padding: 16px 18px; display: grid; gap: 10px; }
 .save-link .copy-row b { font-size: 13px; font-weight: 500; }
@@ -429,7 +431,8 @@ select:focus, .checkout input:focus, .reseller-form input:focus { border-color: 
 
 /* Reseller profile */
 .acc-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 18px; }
-.acc-head .page-title { margin: 4px 0 0; }
+.acc-head .page-title { margin: 4px 0 0; overflow-wrap: anywhere; }
+.sum-row .acct-id { min-width: 0; text-align: right; overflow-wrap: anywhere; padding-left: 12px; }
 .acc-bal { text-align: right; }
 .acc-bal small { display: block; color: var(--muted); font-size: 12px; }
 .acc-bal b { font-size: 26px; color: var(--green); }
@@ -481,6 +484,8 @@ select:focus, .checkout input:focus, .reseller-form input:focus { border-color: 
 .auth-card input { padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 14.5px; outline: none; }
 .auth-card input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-100); }
 .auth-card a, .auth-side a { color: var(--primary); font-weight: 600; }
+.auth-card .forgot-link { justify-self: end; margin-top: -6px; font-size: 13px; }
+.temp-pw-note { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; border-radius: 9px; padding: 10px 12px; font-size: 13.5px; }
 .auth-card .code-input { font-size: 26px; letter-spacing: 10px; text-align: center; font-weight: 700; }
 .auth-card h3 { font-size: 20px; }
 .auth-side h2 { font-size: 30px; margin: 8px 0 16px; }
@@ -489,7 +494,7 @@ select:focus, .checkout input:focus, .reseller-form input:focus { border-color: 
 .auth-perks svg { width: 20px; height: 20px; color: var(--primary); flex-shrink: 0; }
 @media (min-width: 1021px) { .nav-login-link { display: none; } }
 @media (max-width: 1020px) { .nav-login, .nav-user { margin-left: auto; } .nav-login ~ .nav-cart, .nav-user ~ .nav-cart { margin-left: 0; } }
-@media (max-width: 860px) { .auth-grid { grid-template-columns: 1fr; } .auth-side { order: -1; } }
+@media (max-width: 860px) { .auth-grid { grid-template-columns: 1fr; } .auth-side { order: -1; } .auth-grid.form-first .auth-side { order: 0; } }
 @media (max-width: 760px) { .nav-login, .nav-user span { display: none; } .nav-user { padding: 8px; } .nav-login ~ .nav-cart { margin-left: auto; } }
 
 /* Order status */

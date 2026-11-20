@@ -15,7 +15,9 @@ let USER = null;
 // Only approved resellers get the 2+ price and a wallet; a pending/rejected applicant is a normal member
 const isRes = () => !!(USER && USER.reseller);
 // Where to send someone who wants the reseller price
-const resellerCta = (next) => (USER ? `<a href="account.html">${USER.status === "rejected" ? "Fix your reseller application" : "Your reseller application is under review"}</a>` : `<a href="login.html?mode=join&next=${encodeURIComponent(next)}">Apply as reseller</a>`);
+const resellerCta = (next) => (!USER ? `<a href="login.html?mode=join&next=${encodeURIComponent(next)}">Apply as reseller</a>`
+  : USER.status === "member" ? `<a href="account.html#status">Apply as reseller</a>`
+  : `<a href="account.html">${USER.status === "rejected" ? "Fix your reseller application" : "Your reseller application is under review"}</a>`);
 const unitPrice = (v, qty) => (isRes() && hasBulk(v) && qty >= SITE.bulkMinQty ? v.bulkPrice : v.price);
 const minPrice = (p) => Math.min(...p.variants.map((v) => (hasBulk(v) ? v.bulkPrice : v.price)));
 const totalStock = (p) => p.variants.reduce((a, v) => a + v.stock, 0);
@@ -229,7 +231,10 @@ const ICON = {
 
 const waLink = (text) => `https://wa.me/${SITE.whatsapp}${text ? "?text=" + encodeURIComponent(text) : ""}`;
 // After applying for the reseller program: open the owner's WhatsApp chat with the request already typed.
-const applyWaLink = (username, link) => waLink(`Hi, please approve me for your reseller website. Username: ${username}${link ? "\nMy store: " + link : ""}`);
+const applyWaLink = (username, link) => waLink(`Hi, please approve me for your reseller website. ${acctLabel(username)}: ${username}${link ? "\nMy store: " + link : ""}`);
+// New accounts log in with their email; accounts made before that keep a plain username
+function acctLabel(u) { return String(u || "").includes("@") ? "Email" : "Username"; }
+const shortName = (u) => String(u || "").split("@")[0];
 const tgLink = () => `https://t.me/${SITE.telegram}`;
 const botLink = () => SITE.bot || tgLink();
 
@@ -257,7 +262,7 @@ function renderHeader() {
         ${USER ? `<a href="account.html" class="nav-login-link">My Profile</a>` : `<a href="login.html" class="nav-login-link">Login / Join</a>`}
       </nav>
       ${USER
-        ? `<a class="nav-user" href="account.html" title="My profile">${ICON.users}<span>${esc(USER.username)}</span>${USER.reseller ? `<b>${money(USER.balance)}</b>` : `<b class="pend">${USER.status === "rejected" ? "Not approved" : "Pending"}</b>`}</a>`
+        ? `<a class="nav-user" href="account.html" title="My profile · ${esc(USER.username)}">${ICON.users}<span>${esc(shortName(USER.username))}</span>${USER.reseller ? `<b>${money(USER.balance)}</b>` : USER.status === "member" ? "" : `<b class="pend">${USER.status === "rejected" ? "Not approved" : "Pending"}</b>`}</a>`
         : `<a class="btn btn-outline nav-login" href="login.html">Login</a>`}
       <a class="btn btn-primary nav-cart" href="cart.html">${ICON.cart}<span>Cart</span><span class="cart-count" hidden>0</span></a>
       <button class="nav-toggle" aria-label="Menu" aria-expanded="false">${ICON.menu}</button>
@@ -613,7 +618,7 @@ function initCart() {
   const render = () => {
     const lines = Cart.lines();
     if (!lines.length) {
-      root.innerHTML = `<div class="empty card"><h2>Your cart is empty</h2><p class="muted">Order as a guest, or log in as a reseller to get the 2+ price.</p><a class="btn btn-primary" href="index.html#products">Browse products</a></div>`;
+      root.innerHTML = `<div class="empty card"><h2>Your cart is empty</h2><p class="muted">Pick a product to get started. Approved resellers get the 2+ price.</p><a class="btn btn-primary" href="index.html#products">Browse products</a></div>`;
       return;
     }
     const subtotal = lines.reduce((a, l) => a + l.total, 0);
@@ -650,14 +655,20 @@ function initCart() {
           <div class="sum-row"><span>Regular price</span><span>${money(subtotal + saved)}</span></div>
           ${saved ? `<div class="sum-row save"><span>Reseller discount</span><span>− ${money(saved)}</span></div>` : ""}
           <div class="sum-row total"><span>Total</span><strong>${money(subtotal)}</strong></div>
+          ${!USER ? `
+          <div class="login-gate">
+            <p><b>Log in to place your order.</b> A free account keeps all your orders and account details in one place.</p>
+            <a class="btn btn-primary btn-block" href="login.html?next=${next}">Log in</a>
+            <a class="btn btn-outline btn-block" href="login.html?mode=signup&next=${next}">Create free account</a>
+          </div>` : `
           ${isRes()
             ? `<div class="acct-note ok">${ICON.users}<span>Ordering as reseller <b>${esc(USER.username)}</b></span></div>`
-            : `<div class="acct-note">${ICON.tag}<span>Ordering as ${USER ? `member <b>${esc(USER.username)}</b>` : "guest"}.${couldSave ? ` Resellers save <b>${money(couldSave)}</b> on this order —` : ""} ${resellerCta("cart.html")} for 2+ prices.</span></div>`}
+            : `<div class="acct-note">${ICON.tag}<span>Ordering as <b>${esc(USER.username)}</b>.${couldSave ? ` Resellers save <b>${money(couldSave)}</b> on this order —` : ""} ${resellerCta("cart.html")} for 2+ prices.</span></div>`}
           <form id="checkout-form">
             ${payFields(isRes())}
             <div class="form-error" id="form-error" hidden></div>
             <button class="btn btn-primary btn-block" type="submit" id="place-btn">Place order · ${money(subtotal)}</button>
-          </form>
+          </form>`}
           <p class="muted small">Your payment is verified automatically, 24/7. Your account details will appear on your order page.</p>
         </aside>
       </div>`;
@@ -675,6 +686,7 @@ function initCart() {
       render();
     }));
     const form = $("#checkout-form");
+    if (!form) return; // logged out: only the Log in / Create account buttons
     if (!window.__pxCheckout) {
       window.__pxCheckout = true;
       window.track?.("InitiateCheckout", { content_type: "product", content_ids: lines.map((l) => l.p.slug), num_items: lines.reduce((a, l) => a + l.qty, 0), value: subtotal, currency: "USD" });
@@ -850,7 +862,7 @@ async function initOrder() {
         </div>
         <aside class="card checkout">
           <h3>Details</h3>
-          <div class="sum-row"><span>Account</span><span>${o.customer.username ? "Reseller · " + esc(o.customer.username) : "Guest"}</span></div>
+          <div class="sum-row"><span>Account</span><span>${o.customer.username ? (o.customer.reseller ? "Reseller · " : "Buyer · ") + esc(o.customer.username) : "Guest"}</span></div>
           <div class="sum-row"><span>Payment</span><span>${esc(o.payment.method)}</span></div>
           ${o.payment.auto ? `<div class="sum-row"><span>Amount</span><span>${esc(o.payment.amountUsdt)} USDT</span></div>` : ""}
           ${o.payment.sender ? `<div class="sum-row"><span>Sender</span><span>${esc(o.payment.sender)}</span></div>` : ""}
@@ -1080,26 +1092,29 @@ function initAdmin() {
       pending: users.filter((u) => u.status === "pending"),
       approved: users.filter((u) => u.status === "approved"),
       rejected: users.filter((u) => u.status === "rejected"),
+      member: users.filter((u) => u.status === "member"), // buyer accounts that never applied
     };
     const list = groups[userTab] || [];
-    const tabs = [["pending", "Pending"], ["approved", "Approved"], ["rejected", "Rejected"]];
+    const tabs = [["pending", "Pending"], ["approved", "Approved"], ["rejected", "Rejected"], ["member", "Buyers"]];
     const link = (a) => (/^https?:\/\//i.test(a.link) ? `<a href="${esc(a.link)}" target="_blank" rel="noopener nofollow">${esc(a.link)}</a>` : esc(a.link));
-    const appCell = (u) => u.application ? `<b>${esc(TYPE_LABEL[u.application.type] || u.application.type)}</b><br>${link(u.application)}${u.application.contact ? `<br><span class="muted small">Contact: ${esc(u.application.contact)}</span>` : ""}${u.application.note ? `<br><span class="muted small">${esc(u.application.note)}</span>` : ""}` : '<span class="muted small">— (older account)</span>';
+    const appCell = (u) => u.application ? `<b>${esc(TYPE_LABEL[u.application.type] || u.application.type)}</b><br>${link(u.application)}${u.application.contact ? `<br><span class="muted small">Contact: ${esc(u.application.contact)}</span>` : ""}${u.application.note ? `<br><span class="muted small">${esc(u.application.note)}</span>` : ""}`
+      : `<span class="muted small">${u.status === "member" ? "Buyer account — hasn't applied" : "— (older account)"}</span>`;
     root.innerHTML = sectionBar(pendingTopups) + `
       <div class="tabs admin-tabs" style="margin-bottom:14px">${tabs.map(([k, l]) => `<button class="tab ${userTab === k ? "active" : ""}" data-ut="${k}">${l} (${groups[k].length})</button>`).join("")}</div>
       ${list.length ? `<div class="card table-wrap"><table>
         <thead><tr><th>Account</th><th>Where they sell</th><th>Applied</th><th>Orders</th><th>Balance</th><th></th></tr></thead>
         <tbody>${list.map((u) => `<tr data-u="${esc(u.username)}">
-          <td><b>${esc(u.username)}</b><br><span class="muted small">joined ${fmtDate(u.createdAt)}</span></td>
+          <td><b style="overflow-wrap:anywhere">${esc(u.username)}</b><br><span class="muted small">joined ${fmtDate(u.createdAt)}</span>${u.tempPassword ? '<br><span class="status s-pending">Temp password</span>' : ""}
+            <br><button class="link-btn" style="margin-left:0;padding:0" data-resetpw>Reset password</button></td>
           <td>${appCell(u)}${u.application && u.application.rejectNote ? `<br><span class="bal-short small">Rejected: ${esc(u.application.rejectNote)}</span>` : ""}</td>
           <td class="muted">${u.application ? fmtDate(u.application.submittedAt) : "—"}</td>
           <td>${u.orders}</td><td><b class="amt-plus">${money(u.balance)}</b></td>
           <td class="tu-actions">
-            ${u.status !== "approved" ? '<button class="btn btn-primary" data-rv="approve">Approve</button>' : ""}
-            ${u.status !== "rejected" ? `<button class="btn btn-outline" data-rv="reject">${u.status === "approved" ? "Revoke" : "Reject"}</button>` : ""}
+            ${u.status !== "approved" && u.status !== "member" ? '<button class="btn btn-primary" data-rv="approve">Approve</button>' : ""}
+            ${u.status !== "rejected" && u.status !== "member" ? `<button class="btn btn-outline" data-rv="reject">${u.status === "approved" ? "Revoke" : "Reject"}</button>` : ""}
             ${u.status === "approved" ? `<div class="adj"><input type="number" step="0.01" placeholder="+5 or -2"><input type="text" placeholder="Note"><button class="btn btn-outline" data-adj>Balance</button></div>` : ""}
           </td>
-        </tr>`).join("")}</tbody></table></div>` : `<div class="empty card">${userTab === "pending" ? "No applications waiting." : `No ${userTab} resellers.`}</div>`}`;
+        </tr>`).join("")}</tbody></table></div>` : `<div class="empty card">${userTab === "pending" ? "No applications waiting." : userTab === "member" ? "No buyer accounts yet." : `No ${userTab} resellers.`}</div>`}`;
     bindBar();
     $$("[data-ut]", root).forEach((b) => b.addEventListener("click", () => { userTab = b.dataset.ut; load(); }));
     $$("[data-rv]", root).forEach((b) => b.addEventListener("click", async () => {
@@ -1118,6 +1133,31 @@ function initAdmin() {
       const r = await api(`/api/admin/users/${encodeURIComponent(tr.dataset.u)}/adjust`, { method: "POST", body: JSON.stringify({ amount: Number(amt.value), note: note.value }) });
       const d = await r.json().catch(() => ({}));
       toast(r.ok ? `New balance: ${money(d.balance)}` : esc(d.error || "Failed"));
+      load();
+    }));
+    // Forgot password: make a temporary password, show it once, the admin sends it to the customer
+    $$("[data-resetpw]", root).forEach((b) => b.addEventListener("click", async () => {
+      const u = b.closest("tr").dataset.u;
+      const ok = await modal({
+        title: `Reset ${esc(u)}'s password?`,
+        body: `<p>A new temporary password is made and shown to you once. Send it to the customer; after logging in with it they are asked to choose their own password.</p>
+               <p class="muted small">Their old password stops working and they are logged out on all devices.</p>`,
+        confirm: "Reset password", danger: true,
+      });
+      if (!ok) return;
+      const r = await api(`/api/admin/users/${encodeURIComponent(u)}/reset-password`, { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(esc(d.error || "Could not reset")); return; }
+      const msg = `Your ${SITE.name} password was reset.\n${acctLabel(u)}: ${u}\nTemporary password: ${d.password}\nLog in at ${location.origin}/login.html and choose your own password.`;
+      const shown = modal({
+        title: "Temporary password",
+        body: `<p>Send this to <b>${esc(u)}</b>. It is shown only now.</p>
+               ${copyRow("Temporary password", d.password, d.password)}
+               ${copyRow("Message to send", `${acctLabel(u)} + password + login link`, msg)}`,
+        confirm: "Done", cancel: "Close",
+      });
+      $$(".modal-backdrop [data-copy]").forEach((c) => c.addEventListener("click", () => copyText(c.dataset.copy, c)));
+      await shown;
       load();
     }));
   };
@@ -1149,7 +1189,7 @@ function initAdmin() {
     const shown = orders.filter((o) => (filter === "all" || o.status === filter) && matches(o));
     root.innerHTML = sectionBar(pendingTopups) + `
       <form class="order-search" id="order-search">
-        ${ICON.search}<input name="q" value="${esc(orderQuery)}" placeholder="Search order ID (e.g. PS-48291736), transaction ID or username" autocomplete="off">
+        ${ICON.search}<input name="q" value="${esc(orderQuery)}" placeholder="Search order ID (e.g. PS-48291736), transaction ID or customer email" autocomplete="off">
         ${orderQuery ? `<button type="button" class="btn btn-outline" id="os-clear">Clear</button>` : ""}
         <button class="btn btn-primary">Find</button>
       </form>
@@ -1169,7 +1209,7 @@ function initAdmin() {
           <div class="ao-grid">
             <div>
               <h5 class="label">Customer</h5>
-              <p>${o.customer.username ? `Reseller · <b>${esc(o.customer.username)}</b>` : "Guest"}${o.customer.name ? "<br>" + esc(o.customer.name) : ""}${o.customer.phone ? "<br>" + esc(o.customer.phone) : ""}</p>
+              <p>${o.customer.username ? `${o.customer.reseller ? "Reseller" : "Buyer"} · <b>${esc(o.customer.username)}</b>` : "Guest"}${o.customer.name ? "<br>" + esc(o.customer.name) : ""}${o.customer.phone ? "<br>" + esc(o.customer.phone) : ""}</p>
               <h5 class="label">Payment</h5>
               <p>${esc(o.payment.method)}${o.payment.auto ? ` · <b>${esc(o.payment.amountUsdt)} USDT</b>` : ""}${o.payment.trx ? `<br>TrxID: <b>${esc(o.payment.trx)}</b>` : ""}${o.refunded ? '<br><span class="status s-cancelled">Refunded to balance</span>' : ""}${o.payment.sender ? "<br>From: " + esc(o.payment.sender) : ""}${o.payment.proof ? `<br><button type="button" class="link-btn" data-proof="${esc(o.payment.proof)}">View payment screenshot</button>` : ""}</p>
               ${o.cancelReason ? `<p class="muted small">${esc(o.cancelReason)}</p>` : ""}
@@ -1233,7 +1273,7 @@ function initAdmin() {
         const step1 = await modal({
           title: `Delete order ${esc(o.id)}?`,
           body: `<p>${o.items.map((i) => `${esc(i.name)} · ${esc(i.plan)} ×${i.qty}`).join("<br>")}</p>
-                 <p class="muted small">${money(o.total)} · ${o.customer.username ? "Reseller " + esc(o.customer.username) : "Guest"} · ${STATUS_LABEL[o.status]}</p>`,
+                 <p class="muted small">${money(o.total)} · ${o.customer.username ? (o.customer.reseller ? "Reseller " : "Buyer ") + esc(o.customer.username) : "Guest"} · ${STATUS_LABEL[o.status]}</p>`,
           confirm: "Yes, continue", danger: true,
         });
         if (!step1) return;
@@ -1272,10 +1312,15 @@ function initAdmin() {
 window.initAdmin = initAdmin;
 
 /* ---------- Page: Reseller profile ---------- */
+// Shown on the change-password form after the admin reset the password (forgot password)
+const tempPwNote = () => (USER && USER.tempPassword
+  ? `<div class="temp-pw-note"><b>You're using a temporary password.</b> Choose your own password now — type the temporary one as "Current password".</div>` : "");
+
 /* ---------- Page: Profile of a member whose reseller application isn't approved (yet) ---------- */
 async function initApplicantAccount() {
   const root = $("#account-root");
-  const TABS = [["status", "Application"], ["orders", "My orders"], ["settings", "Settings"]];
+  const member = () => USER.status === "member"; // buyer account that never applied
+  const TABS = [["status", member() ? "Reseller program" : "Application"], ["orders", "My orders"], ["settings", "Settings"]];
   const TYPE_LABEL = { website: "Website / online store", bot: "Telegram / WhatsApp bot", other: "Facebook page / group / other" };
   const PH = { website: "https://yourstore.com", bot: "https://t.me/yourbot  or  @yourbot", other: "https://facebook.com/yourpage" };
   let orders = [];
@@ -1283,6 +1328,24 @@ async function initApplicantAccount() {
 
   const statusView = () => {
     const a = USER.application, rej = USER.status === "rejected";
+    if (member()) return `
+      <div class="card app-status pend">
+        <span class="status s-pending">Buyer account</span>
+        <h3>Want the reseller price?</h3>
+        <p class="muted">You order at normal prices. Sell to your own customers? Apply with your website, bot or page link. Once the admin approves you, you pay the reseller price on ${SITE.bulkMinQty}+ pieces and get a wallet.</p>
+      </div>
+      <div class="acc-two">
+        <form class="card acc-form" id="apply-form">
+          <h3>Apply as reseller</h3>
+          <label>Where do you sell?
+            <select name="type">${Object.entries(TYPE_LABEL).map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select></label>
+          <label>Website / bot / page link<input name="link" required maxlength="300" placeholder="${PH.website}"></label>
+          <label>Telegram / WhatsApp (optional)<input name="contact" maxlength="80"></label>
+          <label>About your business (optional)<textarea name="note" rows="2" maxlength="500"></textarea></label>
+          <div class="form-error" id="apply-error" hidden></div>
+          <button class="btn btn-primary btn-block">Submit application</button>
+        </form>
+      </div>`;
     return `
       <div class="card app-status ${rej ? "rej" : "pend"}">
         <span class="status ${rej ? "s-cancelled" : "s-pending"}">${rej ? "Not approved" : "Under review"}</span>
@@ -1326,6 +1389,7 @@ async function initApplicantAccount() {
     <div class="acc-two">
       <form class="card acc-form" id="pw-form">
         <h3>Change password</h3>
+        ${tempPwNote()}
         <label>Current password<input name="current" type="password" required autocomplete="current-password"></label>
         <label>New password<input name="next" type="password" required minlength="6" autocomplete="new-password"></label>
         <label>Confirm new password<input name="next2" type="password" required minlength="6" autocomplete="new-password"></label>
@@ -1334,8 +1398,8 @@ async function initApplicantAccount() {
       </form>
       <div class="card acc-form">
         <h3>Account</h3>
-        <div class="sum-row"><span>Username</span><b>${esc(USER.username)}</b></div>
-        <div class="sum-row"><span>Account type</span><span class="status s-pending">Member</span></div>
+        <div class="sum-row"><span>${acctLabel(USER.username)}</span><b class="acct-id">${esc(USER.username)}</b></div>
+        <div class="sum-row"><span>Account type</span><span class="status s-pending">${member() ? "Buyer" : "Member"}</span></div>
         <div class="sum-row"><span>Member since</span><span>${fmtDate(USER.createdAt)}</span></div>
         <button class="btn btn-outline btn-block" id="acc-logout">Log out</button>
       </div>
@@ -1343,11 +1407,13 @@ async function initApplicantAccount() {
 
   const views = { status: statusView, orders: ordersView, settings: settingsView };
   const render = () => {
-    const tab = TABS.some(([k]) => "#" + k === location.hash) ? location.hash.slice(1) : "status";
+    const tab = TABS.some(([k]) => "#" + k === location.hash) ? location.hash.slice(1) : (USER.tempPassword ? "settings" : member() ? "orders" : "status");
     root.innerHTML = `
       <div class="acc-head">
         <div><span class="eyebrow">Member profile</span><h1 class="page-title">${esc(USER.username)}</h1></div>
-        <div class="acc-bal"><small>Reseller status</small><b class="${USER.status === "rejected" ? "amt-minus" : ""}" style="color:${USER.status === "rejected" ? "var(--red)" : "#b45309"}">${USER.status === "rejected" ? "Not approved" : "Pending"}</b></div>
+        ${member()
+          ? `<div class="acc-bal"><small>Account</small><b style="color:var(--ink)">Buyer</b></div>`
+          : `<div class="acc-bal"><small>Reseller status</small><b class="${USER.status === "rejected" ? "amt-minus" : ""}" style="color:${USER.status === "rejected" ? "var(--red)" : "#b45309"}">${USER.status === "rejected" ? "Not approved" : "Pending"}</b></div>`}
       </div>
       <div class="tabs acc-tabs">${TABS.map(([k, l]) => `<a class="tab ${k === tab ? "active" : ""}" href="#${k}">${l}</a>`).join("")}</div>
       <div id="acc-view">${views[tab]()}</div>`;
@@ -1375,6 +1441,7 @@ async function initApplicantAccount() {
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { err.textContent = d.error || "Could not update."; err.hidden = false; return; }
       pf.reset(); toast("Password updated");
+      if (USER.tempPassword) { USER.tempPassword = false; render(); }
     });
   };
 
@@ -1464,6 +1531,7 @@ async function initAccount() {
       <div class="acc-two">
         <form class="card acc-form" id="pw-form">
           <h3>Change password</h3>
+          ${tempPwNote()}
           <label>Current password<input name="current" type="password" required autocomplete="current-password"></label>
           <label>New password<input name="next" type="password" required minlength="6" autocomplete="new-password"></label>
           <label>Confirm new password<input name="next2" type="password" required minlength="6" autocomplete="new-password"></label>
@@ -1472,7 +1540,7 @@ async function initAccount() {
         </form>
         <div class="card acc-form">
           <h3>Account</h3>
-          <div class="sum-row"><span>Username</span><b>${esc(USER.username)}</b></div>
+          <div class="sum-row"><span>${acctLabel(USER.username)}</span><b class="acct-id">${esc(USER.username)}</b></div>
           <div class="sum-row"><span>Account type</span><span class="status s-delivered">Reseller</span></div>
           <div class="sum-row"><span>Member since</span><span>${fmtDate(USER.createdAt)}</span></div>
           <button class="btn btn-outline btn-block" id="acc-logout">Log out</button>
@@ -1481,7 +1549,7 @@ async function initAccount() {
   };
 
   const render = () => {
-    const tab = TABS.some(([k]) => "#" + k === location.hash) ? location.hash.slice(1) : "overview";
+    const tab = TABS.some(([k]) => "#" + k === location.hash) ? location.hash.slice(1) : (USER.tempPassword ? "settings" : "overview");
     root.innerHTML = `
       <div class="acc-head">
         <div><span class="eyebrow">Reseller profile</span><h1 class="page-title">${esc(USER.username)}</h1></div>
@@ -1534,6 +1602,7 @@ async function initAccount() {
         const d = await r.json().catch(() => ({}));
         if (!r.ok) { err.textContent = d.error || "Could not update."; err.hidden = false; return; }
         e.target.reset(); toast("Password updated");
+        if (USER.tempPassword) { USER.tempPassword = false; render(); }
       });
     }
   };
@@ -1547,8 +1616,10 @@ async function initAccount() {
 function initLogin() {
   const qs = new URLSearchParams(location.search);
   const next = /^[a-z]+\.html([?#].*)?$|^\/[a-z]+\.html([?#].*)?$/i.test(qs.get("next") || "") ? qs.get("next") : "index.html";
+  const hasNext = next === qs.get("next"); // came from a page that needs login (e.g. the cart)
   if (USER) { location.replace(next); return; }
-  let mode = qs.get("mode") === "join" ? "join" : "login";
+  // login · signup (free buyer account) · join (reseller application)
+  let mode = ["join", "signup"].includes(qs.get("mode")) ? qs.get("mode") : "login";
   let storeType = "website";
   const root = $("#login-root");
 
@@ -1561,17 +1632,21 @@ function initLogin() {
   const render = () => {
     const h = typeHelp[storeType];
     root.innerHTML = `
-      <div class="auth-grid">
+      <div class="auth-grid ${mode === "join" ? "" : "form-first"}">
         <div class="card auth-card">
           <div class="tabs auth-tabs">
             <button class="tab ${mode === "login" ? "active" : ""}" data-m="login">Login</button>
+            <button class="tab ${mode === "signup" ? "active" : ""}" data-m="signup">Create account</button>
             <button class="tab ${mode === "join" ? "active" : ""}" data-m="join">Apply as reseller</button>
           </div>
           <form id="auth-form">
-            <label>Username<input name="username" required minlength="3" maxlength="30" pattern="[A-Za-z0-9_.]{3,30}" autocomplete="username" placeholder="e.g. rahim_store"></label>
-            <label>Password<input name="password" type="password" required minlength="6" autocomplete="${mode === "join" ? "new-password" : "current-password"}" placeholder="${mode === "join" ? "At least 6 characters" : ""}"></label>
+            ${mode === "login"
+              ? `<label>Email<input name="email" required maxlength="254" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="you@gmail.com"><small class="muted">Older account? Enter your username here.</small></label>`
+              : `<label>Email<input name="email" type="email" required maxlength="254" autocomplete="email" autocapitalize="off" spellcheck="false" placeholder="you@gmail.com"><small class="muted">Use a real email you can open — it's your login.</small></label>`}
+            <label>Password<input name="password" type="password" required minlength="6" autocomplete="${mode === "login" ? "current-password" : "new-password"}" placeholder="${mode === "login" ? "" : "At least 6 characters"}"></label>
+            ${mode === "login" ? `<a class="forgot-link" id="forgot" href="${tgLink()}" target="_blank" rel="noopener">Forgot password?</a>`
+              : `<label>Confirm password<input name="password2" type="password" required minlength="6" autocomplete="new-password"></label>`}
             ${mode === "join" ? `
-              <label>Confirm password<input name="password2" type="password" required minlength="6" autocomplete="new-password"></label>
               <label>Where do you sell?
                 <select name="type" id="store-type">${Object.entries({ website: "Website / online store", bot: "Telegram / WhatsApp bot", other: "Facebook page / group / other" }).map(([k, l]) => `<option value="${k}" ${k === storeType ? "selected" : ""}>${l}</option>`).join("")}</select>
               </label>
@@ -1579,9 +1654,13 @@ function initLogin() {
               <label>Telegram / WhatsApp to reach you (optional)<input name="contact" maxlength="80" placeholder="@yourname or +8801…"></label>
               <label>About your business (optional)<textarea name="note" rows="2" maxlength="500" placeholder="How many customers, what you sell…"></textarea></label>` : ""}
             <div class="form-error" id="auth-error" hidden></div>
-            <button class="btn btn-primary btn-block" id="auth-btn">${mode === "join" ? "Submit application" : "Login"}</button>
+            <button class="btn btn-primary btn-block" id="auth-btn">${{ login: "Login", signup: "Create account", join: "Submit application" }[mode]}</button>
           </form>
-          <p class="muted small">${mode === "join" ? "Free. The admin reviews your application; you get the reseller price and wallet once approved." : `New here? <a href="#" data-m="join">Apply as reseller</a>.`}</p>
+          <p class="muted small">${{
+            login: `New here? <a href="#" data-m="signup">Create a free account</a> to order, or <a href="#" data-m="join">apply as reseller</a>.`,
+            signup: `Free and ready right away — you can order as soon as it's created. Sell to your own customers? <a href="#" data-m="join">Apply as reseller</a>.`,
+            join: "Free. The admin reviews your application; you get the reseller price and wallet once approved. You can order at normal prices meanwhile.",
+          }[mode]}</p>
         </div>
         <div class="auth-side">
           <span class="eyebrow">Reseller program</span>
@@ -1591,7 +1670,7 @@ function initLogin() {
             <li>${ICON.wallet} Reseller wallet: top up and pay instantly</li>
             <li>${ICON.shield} Same warranty for your customers</li>
           </ul>
-          <p class="muted small"><b>How it works:</b> 1) apply with your website or bot link, 2) the admin checks it, 3) you're approved and can start buying at reseller prices. Just buying for yourself? <a href="cart.html">Order as a guest</a> — no account needed.</p>
+          <p class="muted small"><b>How it works:</b> 1) apply with your website or bot link, 2) the admin checks it, 3) you're approved and can start buying at reseller prices. Just buying for yourself? <a href="#" data-m="signup">Create a free account</a> — only your email and a password.</p>
         </div>
       </div>`;
     $$("[data-m]", root).forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); mode = b.dataset.m; render(); }));
@@ -1601,22 +1680,30 @@ function initLogin() {
       const keep = Object.fromEntries(new FormData($("#auth-form")));
       storeType = sel.value; render();
       const f = $("#auth-form");
-      for (const k of ["username", "password", "password2", "link", "contact", "note"]) if (f[k] && keep[k] !== undefined) f[k].value = keep[k];
+      for (const k of ["email", "password", "password2", "link", "contact", "note"]) if (f[k] && keep[k] !== undefined) f[k].value = keep[k];
+    });
+    // Forgot password: open our Telegram with the request typed in; the admin resets it from the panel
+    const forgot = $("#forgot");
+    if (forgot) forgot.addEventListener("click", () => {
+      const who = $("#auth-form").email.value.trim();
+      forgot.href = tgLink() + "?text=" + encodeURIComponent(`Hi, I forgot my password. My account email: ${who || "(my email)"}`);
     });
     $("#auth-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const f = new FormData(e.target), err = $("#auth-error"), btn = $("#auth-btn");
       err.hidden = true;
-      if (mode === "join" && f.get("password") !== f.get("password2")) { err.textContent = "Passwords don't match."; err.hidden = false; return; }
+      if (mode !== "login" && f.get("password") !== f.get("password2")) { err.textContent = "Passwords don't match."; err.hidden = false; return; }
       btn.disabled = true;
-      const r = await fetch(`/api/auth/${mode === "join" ? "signup" : "login"}`, {
+      const r = await fetch(`/api/auth/${mode === "login" ? "login" : "signup"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(Object.fromEntries(f)),
       });
       const d = await r.json().catch(() => ({}));
       if (r.ok && mode === "join") return location.replace(applyWaLink(d.username, d.application && d.application.link));
-      if (r.ok) return location.replace(mode === "join" ? "account.html#status" : (d.reseller ? next : "account.html#status"));
+      if (r.ok && d.tempPassword) return location.replace("account.html#settings"); // logged in with a reset password
+      // Back to the page that sent them here (e.g. the cart); applicants without one see their application status
+      if (r.ok) return location.replace(mode === "signup" || hasNext || d.reseller || d.status === "member" ? next : "account.html#status");
       err.textContent = d.error || "Something went wrong."; err.hidden = false; btn.disabled = false;
     });
   };
