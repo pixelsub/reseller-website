@@ -329,16 +329,17 @@ function toast(msg) {
 }
 
 /* Modal dialog. Resolves with the form values (object) when confirmed, or null when cancelled. */
-function modal({ title, body, confirm = "Confirm", cancel = "Cancel", danger = false }) {
+// wide: larger scrolling dialog (details views); cancel: "" shows only the confirm button
+function modal({ title, body, confirm = "Confirm", cancel = "Cancel", danger = false, wide = false }) {
   return new Promise((resolve) => {
     const wrap = document.createElement("div");
     wrap.className = "modal-backdrop";
     wrap.innerHTML = `
-      <form class="modal card" role="dialog" aria-modal="true">
+      <form class="modal card ${wide ? "modal-wide" : ""}" role="dialog" aria-modal="true">
         <h3>${title}</h3>
         <div class="modal-body">${body}</div>
         <div class="modal-actions">
-          <button type="button" class="btn btn-outline" data-cancel>${cancel}</button>
+          ${cancel ? `<button type="button" class="btn btn-outline" data-cancel>${cancel}</button>` : ""}
           <button class="btn ${danger ? "btn-danger" : "btn-primary"}">${confirm}</button>
         </div>
       </form>`;
@@ -347,7 +348,8 @@ function modal({ title, body, confirm = "Confirm", cancel = "Cancel", danger = f
     const close = (val) => { wrap.remove(); document.removeEventListener("keydown", onKey); resolve(val); };
     const onKey = (e) => { if (e.key === "Escape") close(null); };
     document.addEventListener("keydown", onKey);
-    $("[data-cancel]", wrap).addEventListener("click", () => close(null));
+    const cancelBtn = $("[data-cancel]", wrap);
+    if (cancelBtn) cancelBtn.addEventListener("click", () => close(null));
     wrap.addEventListener("click", (e) => { if (e.target === wrap) close(null); });
     form.addEventListener("submit", (e) => {
       e.preventDefault();
@@ -355,7 +357,7 @@ function modal({ title, body, confirm = "Confirm", cancel = "Cancel", danger = f
       $$("input[type=checkbox]", form).forEach((c) => (vals[c.name] = c.checked));
       close(vals);
     });
-    $("[data-cancel]", wrap).focus();
+    (cancelBtn || $(".modal-actions button", form)).focus();
   });
 }
 
@@ -1093,6 +1095,49 @@ function initAdmin() {
   };
 
   const TYPE_LABEL = { website: "Website / online store", bot: "Telegram / WhatsApp bot", other: "Facebook page / group / other" };
+  const KIND_LABEL = { member: "Buyer", approved: "Reseller", pending: "Reseller · pending", rejected: "Reseller · rejected" };
+  const LEDGER_LABEL = { topup: "Balance added", order: "Order payment", refund: "Refund", adjust: "Admin adjustment" };
+  // Account details: balance, every order (when, which products, how much) and the balance history
+  const showUserDetails = async (username) => {
+    const r = await api(`/api/admin/users/${encodeURIComponent(username)}`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return toast(esc(d.error || "Could not load this account"));
+    const u = d.user, s = d.stats;
+    const body = `
+      <p class="muted small">${KIND_LABEL[u.status] || "Account"} · joined ${fmtDate(u.createdAt)}${u.tempPassword ? ' · <span class="status s-pending">Temp password</span>' : ""}</p>
+      <div class="ud-stats">
+        <div><small>Balance</small><b class="amt-plus">${money(u.balance)}</b></div>
+        <div><small>Orders</small><b>${s.orders}</b>${s.orders ? `<small>${s.delivered} delivered</small>` : ""}</div>
+        <div><small>Total spent</small><b>${money(s.spent)}</b><small>paid orders only</small></div>
+        <div><small>Last order</small><b class="ud-date">${s.lastOrderAt ? fmtDate(s.lastOrderAt) : "—"}</b></div>
+      </div>
+      <h5 class="label">Orders</h5>
+      ${d.orders.length ? `<div class="table-wrap ud-wrap"><table class="ud-table">
+        <thead><tr><th>Date & time</th><th>Order</th><th>Products</th><th>Total</th><th>Status</th></tr></thead>
+        <tbody>${d.orders.map((o) => `<tr>
+          <td class="muted ud-nowrap">${fmtDate(o.createdAt)}</td>
+          <td><button type="button" class="link-btn ud-order" data-goorder="${esc(o.id)}" title="Open in Orders">${esc(o.id)}</button><br><span class="muted small">${esc(o.method)}</span></td>
+          <td>${o.items.map((i) => `${esc(i.name)} · ${esc(i.plan)} <span class="muted">× ${i.qty}</span>`).join("<br>")}</td>
+          <td><b>${money(o.total)}</b>${o.refunded ? '<br><span class="muted small">refunded</span>' : ""}</td>
+          <td><span class="status s-${esc(o.status)}">${STATUS_LABEL[o.status] || esc(o.status)}</span></td>
+        </tr>`).join("")}</tbody></table></div>` : `<p class="muted">No orders yet.</p>`}
+      ${d.ledger.length ? `<h5 class="label">Balance history</h5>
+        <div class="table-wrap ud-wrap"><table class="ud-table">
+          <thead><tr><th>Date & time</th><th>Type</th><th>Details</th><th>Amount</th><th>Balance</th></tr></thead>
+          <tbody>${d.ledger.map((x) => `<tr>
+            <td class="muted ud-nowrap">${fmtDate(x.createdAt)}</td><td>${LEDGER_LABEL[x.type] || esc(x.type)}</td><td class="muted">${esc(x.note || "")}</td>
+            <td class="${x.amount >= 0 ? "amt-plus" : "amt-minus"}">${x.amount >= 0 ? "+" : "−"}${money(Math.abs(x.amount))}</td><td>${money(x.balanceAfter)}</td></tr>`).join("")}</tbody>
+        </table></div>` : ""}`;
+    const shown = modal({ title: esc(u.username), body, confirm: "Close", cancel: "", wide: true });
+    // An order ID opens that order on the Orders page
+    $$(".modal-backdrop [data-goorder]").forEach((b) => b.addEventListener("click", () => {
+      orderQuery = b.dataset.goorder; filter = "all"; section = "orders";
+      history.replaceState(null, "", "#orders");
+      b.closest("form").requestSubmit();
+      load();
+    }));
+    await shown;
+  };
   const loadUsersView = async (users, pendingTopups) => {
     const groups = {
       pending: users.filter((u) => u.status === "pending"),
@@ -1109,8 +1154,8 @@ function initAdmin() {
       <div class="tabs admin-tabs" style="margin-bottom:14px">${tabs.map(([k, l]) => `<button class="tab ${userTab === k ? "active" : ""}" data-ut="${k}">${l} (${groups[k].length})</button>`).join("")}</div>
       ${list.length ? `<div class="card table-wrap"><table>
         <thead><tr><th>Account</th><th>Where they sell</th><th>Applied</th><th>Orders</th><th>Balance</th><th></th></tr></thead>
-        <tbody>${list.map((u) => `<tr data-u="${esc(u.username)}">
-          <td><b style="overflow-wrap:anywhere">${esc(u.username)}</b><br><span class="muted small">joined ${fmtDate(u.createdAt)}</span>${u.tempPassword ? '<br><span class="status s-pending">Temp password</span>' : ""}
+        <tbody>${list.map((u) => `<tr data-u="${esc(u.username)}" class="user-row" title="Click to see orders, balance and history">
+          <td><button type="button" class="acct-link" data-details>${esc(u.username)}</button><br><span class="muted small">joined ${fmtDate(u.createdAt)}</span>${u.tempPassword ? '<br><span class="status s-pending">Temp password</span>' : ""}
             <br><button class="link-btn" style="margin-left:0;padding:0" data-resetpw>Reset password</button></td>
           <td>${appCell(u)}${u.application && u.application.rejectNote ? `<br><span class="bal-short small">Rejected: ${esc(u.application.rejectNote)}</span>` : ""}</td>
           <td class="muted">${u.application ? fmtDate(u.application.submittedAt) : "—"}</td>
@@ -1123,6 +1168,11 @@ function initAdmin() {
         </tr>`).join("")}</tbody></table></div>` : `<div class="empty card">${userTab === "pending" ? "No applications waiting." : userTab === "member" ? "No buyer accounts yet." : `No ${userTab} resellers.`}</div>`}`;
     bindBar();
     $$("[data-ut]", root).forEach((b) => b.addEventListener("click", () => { userTab = b.dataset.ut; load(); }));
+    // Click the name or anywhere on the row (except its buttons and inputs) to open the account's details
+    $$("tr.user-row", root).forEach((tr) => tr.addEventListener("click", (e) => {
+      if (e.target.closest("input, select, textarea, a, button:not([data-details])")) return;
+      showUserDetails(tr.dataset.u);
+    }));
     $$("[data-rv]", root).forEach((b) => b.addEventListener("click", async () => {
       const u = b.closest("tr").dataset.u, action = b.dataset.rv;
       let note = "";

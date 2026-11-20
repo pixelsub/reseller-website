@@ -1156,6 +1156,24 @@ async function changePassword(req, res) {
 
 // Forgot password: the admin makes a temporary password and sends it to the customer (Telegram / WhatsApp).
 // The account is logged out everywhere; after logging in with it the site asks them to choose their own.
+// Admin: one account's details — balance, order history (what and when) and balance history
+function adminUserDetails(res, username) {
+  const u = readJson(usersFile, []).find((x) => x.username === username);
+  if (!u) return send(res, 404, { error: "Account not found." });
+  const orders = loadOrders().filter((o) => o.customer && o.customer.username === username)
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .map((o) => ({ id: o.id, createdAt: o.createdAt, status: o.status, total: o.total, refunded: !!o.refunded,
+      method: (o.payment && o.payment.method) || "", items: (o.items || []).map((i) => ({ name: i.name, plan: i.plan, qty: i.qty, total: i.total })) }));
+  const paid = orders.filter((o) => o.status === "processing" || o.status === "delivered"); // payment confirmed
+  send(res, 200, {
+    user: publicUser(u),
+    stats: { orders: orders.length, delivered: orders.filter((o) => o.status === "delivered").length,
+      spent: r2(paid.reduce((a, o) => a + (Number(o.total) || 0), 0)), lastOrderAt: orders.length ? orders[0].createdAt : null },
+    orders,
+    ledger: readJson(ledgerFile, []).filter((x) => x.username === username).slice(0, 100),
+  });
+}
+
 function adminResetPassword(req, res, username) {
   const users = readJson(usersFile, []);
   const u = users.find((x) => x.username === username);
@@ -1706,6 +1724,7 @@ async function api(req, res, url) {
 
     // Account in the URL is encoded (emails contain "@")
     const userParam = () => { try { return decodeURIComponent(parts[3]); } catch { return ""; } };
+    if (req.method === "GET" && parts[2] === "users" && parts.length === 4) return adminUserDetails(res, userParam());
     if (req.method === "POST" && parts[2] === "users" && parts[4] === "review" && parts.length === 5) return adminReviewApplication(req, res, userParam());
     if (req.method === "POST" && parts[2] === "users" && parts[4] === "reset-password" && parts.length === 5) return adminResetPassword(req, res, userParam());
     if (route === "GET admin/topups") return send(res, 200, loadTopups());

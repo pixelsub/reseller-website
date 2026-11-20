@@ -43,6 +43,28 @@
 .modal-body .chk { display: flex; gap: 8px; align-items: center; font-weight: 500; cursor: pointer; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .btn-danger { background: var(--red); color: #fff; }
+.modal.modal-wide { width: min(860px, 100%); max-height: calc(100vh - 40px); grid-template-rows: auto minmax(0, 1fr) auto; }
+.modal.modal-wide h3 { overflow-wrap: anywhere; }
+.modal-wide .modal-body { overflow: auto; min-height: 0; align-content: start; }
+
+/* Resellers list: click an account to open its details */
+.user-row { cursor: pointer; }
+.user-row:hover td { background: var(--bg-soft); }
+.acct-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 700; color: var(--ink); cursor: pointer; text-align: left; overflow-wrap: anywhere; }
+.user-row:hover .acct-link, .acct-link:focus-visible { color: var(--primary); text-decoration: underline; }
+.ud-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.ud-stats > div { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: grid; gap: 2px; align-content: start; }
+.ud-stats small { color: var(--muted); font-size: 12px; }
+.ud-stats b { font-size: 17px; color: var(--ink); }
+.ud-stats b.amt-plus { color: var(--green); }
+.ud-stats b.ud-date { font-size: 14px; }
+.modal-body .label { margin: 6px 0 0; }
+.ud-wrap { border: 1px solid var(--line); border-radius: 12px; }
+.ud-table { font-size: 13.5px; }
+.ud-table td { vertical-align: top; }
+.ud-nowrap { white-space: nowrap; }
+.ud-order { margin: 0; padding: 0; font-size: 13.5px; white-space: nowrap; }
+@media (max-width: 640px) { .ud-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .btn-danger:hover { background: #b91c1c; }
 .ao-grid .form-error { margin-bottom: 8px; }
 .ao-grid .status { margin-top: 4px; }
