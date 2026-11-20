@@ -313,6 +313,8 @@ async function refreshPx(maxAge = 55_000) {
       id: String(x.id), name: String(x.name || `Product ${x.id}`), price: Number(x.price) || 0,
       stock: x.stock === null || x.stock === undefined ? null : Math.max(0, Number(x.stock) || 0), // null = unlimited
       inStock: x.inStock !== false,
+      // Product description written in the PixelSub bot (plain text, line breaks kept) — shown on the product page
+      description: typeof x.description === "string" ? x.description.replace(/\r\n?/g, "\n").trim().slice(0, 4000) : "",
     }));
     pxCache = { ...pxCache, at: Date.now(), list, byId: Object.fromEntries(list.map((x) => [x.id, x])), error: "" };
     pxAutoAdd();
@@ -335,7 +337,7 @@ function pxQuote(v) {
   const price = Math.max(0.01, r4(cost));
   const bulkPrice = null;
   const stock = s.inStock ? (s.stock === null ? PX_UNLIMITED : s.stock) : 0;
-  return { cost: r4(cost), unitCost: r4(cost), price, bulkPrice, stock, minQty: 1, supplierPrice: s.price, supplierStock: s.stock, available: stock > 0 };
+  return { cost: r4(cost), unitCost: r4(cost), price, bulkPrice, stock, minQty: 1, supplierPrice: s.price, supplierStock: s.stock, available: stock > 0, description: s.description };
 }
 
 const r4 = (n) => Math.round(n * 10000) / 10000;
@@ -360,6 +362,7 @@ function liveCatalog() {
         const q = supplierQuote(v, cat.SITE);
         if (!q) return { ...v, stock: 0, live: { available: false, missing: true } };
         return { ...v, price: q.price, bulkPrice: q.bulkPrice, cost: q.cost, stock: q.stock,
+          ...(q.description ? { desc: q.description } : {}), // live from the supplier, never saved in the catalogue
           live: { supplierPrice: q.supplierPrice, supplierStock: q.supplierStock, available: q.available, minQty: q.minQty } };
       }),
     })),

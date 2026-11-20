@@ -39,6 +39,7 @@ Set `PIXELSUB_API_KEY` in `.env` (the same PixelSub account your Telegram bot us
 - **No markup:** the site shows exactly the price and stock PixelSub returns. Any price calculation (reseller discounts etc.) is done in the PixelSub admin panel, not here.
 - **Auto-add:** every PixelSub product is added to the store automatically (a plan linked to it, name/duration guessed from its title, category guessed from keywords). Products you delete are not added again. Set `PIXELSUB_AUTO_ADD=0` to turn this off.
 - **Admin → Supplier:** PixelSub balance and the full catalogue with live price & stock; you can also add products by hand and press **Retry failed supplier orders**.
+- **Description:** a PixelSub-linked plan shows the product description written in the PixelSub bot in the product page's terms box, exactly as written there (same lines and blank lines, refreshed every minute). Products without one show the terms typed in Admin → Products.
 - Edit names, logos and terms in **Admin → Products** (a PixelSub-linked plan's price and stock are read-only).
 
 How it works:

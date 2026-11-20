@@ -344,6 +344,8 @@ select:focus, .checkout input:focus, .reseller-form input:focus { border-color: 
 .terms h4 { display: flex; gap: 8px; align-items: center; font-size: 15px; margin-bottom: 12px; }
 .terms h4 svg { width: 18px; height: 18px; color: var(--primary); }
 .terms ol { padding-left: 20px; display: grid; gap: 6px; margin-bottom: 14px; font-size: 14.5px; }
+/* Shown exactly as written in the PixelSub bot: same lines, blank lines and spacing */
+.terms-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14.5px; line-height: 1.75; color: var(--ink); margin-bottom: 14px; }
 .pd-side { position: sticky; top: 90px; }
 .order-card { padding: 22px; display: grid; gap: 14px; }
 .oc-title { font-weight: 700; color: var(--ink); font-size: 16px; margin-top: -8px; }

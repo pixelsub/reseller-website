@@ -500,11 +500,11 @@ function initProduct() {
         <div class="tier-box" id="tier-box"></div>
       </div>
 
-      <div class="pd-terms">
+      <div class="pd-terms" id="pd-terms">
         <h5 class="label">Read before you buy</h5>
         <div class="terms card">
           <h4>${ICON.shield} Product terms</h4>
-          <ol>${p.terms.map((t) => `<li>${esc(t)}</li>`).join("")}</ol>
+          <div class="terms-text" id="terms-text"></div>
           <p class="muted small">By buying this product you agree to the terms above. Breaking them voids the warranty.</p>
         </div>
       </div>
@@ -560,6 +560,12 @@ function initProduct() {
     const unit = unitPrice(v, qty);
     const bulk = hasBulk(v);
     const isBulk = isRes() && bulk && qty >= SITE.bulkMinQty;
+
+    // Terms: the plan's description from the PixelSub bot, exactly as written there (line breaks kept);
+    // otherwise the terms typed in the admin panel
+    const terms = v.desc || (p.terms || []).join("\n");
+    $("#terms-text").textContent = terms;
+    $("#pd-terms").hidden = !terms.trim();
 
     $("#oc-title").textContent = `${v.pkg} – ${v.duration}`;
     $("#oc-unit").textContent = money(unit);

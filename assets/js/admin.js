@@ -326,7 +326,7 @@ function productEditor(ctx, cat, stockOf) {
               <label>Sold count (shown on site)<input name="sold" type="number" min="0" value="${p.sold || 0}"></label>
             </div>
             <label>Short description<textarea name="short" rows="2" maxlength="300">${esc(p.short || "")}</textarea></label>
-            <label>Terms — one per line<textarea name="terms" rows="4" placeholder="Private account&#10;Don't change the password">${esc((p.terms || []).join("\n"))}</textarea></label>
+            <label>Terms — one per line <span class="muted small">(PixelSub plans show the description from the PixelSub bot instead)</span><textarea name="terms" rows="4" placeholder="Private account&#10;Don't change the password">${esc((p.terms || []).join("\n"))}</textarea></label>
             <div class="checks">
               <label class="chk"><input type="checkbox" name="isNew" ${p.isNew ? "checked" : ""}> Show “New” badge</label>
               <label class="chk"><input type="checkbox" name="popular" ${p.popular ? "checked" : ""}> Popular</label>
