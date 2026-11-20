@@ -147,10 +147,11 @@ h1, h2, h3, h4 { color: var(--ink); line-height: 1.2; letter-spacing: -.02em; }
 .hero-prev svg { transform: rotate(180deg); }
 
 /* Marquee */
-.marquee { border-block: 1px solid var(--line); background: var(--bg-soft); padding: 14px 0; overflow: hidden; }
-.marquee-track { display: flex; gap: 12px; width: max-content; animation: scroll 60s linear infinite; }
-.marquee:hover .marquee-track { animation-play-state: paused; }
-@keyframes scroll { to { transform: translateX(-50%); } }
+/* Moved by scrolling from app.js (autoScroll), not a CSS transform: iPhone Safari can't draw one
+   animated strip this wide (it showed up empty). Visitors can also swipe it. */
+.marquee { border-block: 1px solid var(--line); background: var(--bg-soft); padding: 14px 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; scroll-behavior: auto; overscroll-behavior-x: contain; }
+.marquee::-webkit-scrollbar { display: none; }
+.marquee-track { display: flex; gap: 12px; width: max-content; }
 .chip {
   display: flex; align-items: center; gap: 10px; background: #fff; border: 1px solid var(--line);
   border-radius: 12px; padding: 8px 16px 8px 8px; font-size: 14px; white-space: nowrap;

@@ -361,6 +361,36 @@ function modal({ title, body, confirm = "Confirm", cancel = "Cancel", danger = f
   });
 }
 
+/* Endless product strip: `box` scrolls sideways through content made of two identical halves.
+   Scrolling (instead of a CSS transform animation) also works on iPhone, where a strip this wide
+   showed up empty. Stops while hovered or touched, and when off screen; no auto-move with "reduce motion". */
+function autoScroll(box, speed = 60 /* px per second */) {
+  if (!box) return;
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let pos = box.scrollLeft, last = 0, holdUntil = 0, visible = true;
+  const hold = (ms) => { holdUntil = performance.now() + ms; };
+  box.addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse") hold(1e9); });
+  box.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") holdUntil = 0; });
+  box.addEventListener("touchstart", () => hold(1e9), { passive: true });
+  box.addEventListener("touchend", () => hold(2500), { passive: true }); // let a swipe finish gliding
+  box.addEventListener("wheel", () => hold(2500), { passive: true });
+  if ("IntersectionObserver" in window) new IntersectionObserver(([e]) => { visible = e.isIntersecting; }).observe(box);
+  const step = (t) => {
+    const dt = last ? Math.min(t - last, 100) : 0;
+    last = t;
+    if (reduced || !visible || document.hidden || t < holdUntil) pos = box.scrollLeft; // follow the visitor's own scrolling
+    else {
+      const kids = box.firstElementChild ? box.firstElementChild.children : [];
+      const half = kids.length > 1 ? kids[kids.length / 2].offsetLeft - kids[0].offsetLeft : 0; // where the copy starts
+      pos += (speed * dt) / 1000;
+      if (half > box.clientWidth && pos >= half) pos -= half; // second half looks the same: jump back unnoticed
+      box.scrollLeft = pos;
+    }
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 /* ---------- Components ---------- */
 const productIcon = (p, size = "") =>
   p.image
@@ -420,6 +450,7 @@ function initHome() {
   // Marquee
   const chips = PRODUCTS.map((p) => `<a class="chip" href="product.html?p=${p.slug}">${productIcon(p, "sm")}<b>${esc(p.name)}</b><span>${esc(p.category)}</span></a>`).join("");
   $(".marquee-track").innerHTML = chips + chips;
+  autoScroll($(".marquee"));
 
   // Product grid with tabs + search
   const tabs = ["Popular", ...CATEGORIES, "New"];
@@ -751,7 +782,7 @@ function initLanding() {
   const deals = PRODUCTS.filter((p) => totalStock(p) > 0 && productHasBulk(p));
   const list = (deals.length >= 6 ? deals : PRODUCTS).slice(0, 8);
   const mq = $("#lp-marquee");
-  if (mq) { const chips = PRODUCTS.map((p) => `<span class="chip">${productIcon(p, "sm")}<b>${esc(p.name)}</b></span>`).join(""); mq.innerHTML = chips + chips; }
+  if (mq) { const chips = PRODUCTS.map((p) => `<span class="chip">${productIcon(p, "sm")}<b>${esc(p.name)}</b></span>`).join(""); mq.innerHTML = chips + chips; autoScroll(mq.parentElement); }
   const live = $("#lp-live-rows");
   if (live) live.innerHTML = list.slice(0, 4).map((p) => {
     const v = p.variants.find(hasBulk) || p.variants[0];
