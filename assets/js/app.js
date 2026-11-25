@@ -199,7 +199,9 @@ const STATUS_LABEL = {
   delivered: "Delivered",
   cancelled: "Cancelled",
 };
-const fmtDate = (iso) => new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+// The whole site shows Bangladesh time, whatever the visitor's own time zone
+const SITE_TZ = "Asia/Dhaka";
+const fmtDate = (iso) => new Date(iso).toLocaleString("en-GB", { timeZone: SITE_TZ, day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
 function updateCartBadge() {
   const n = Cart.count();
@@ -1566,7 +1568,7 @@ function accDashboard({ orders, card, banner, tabs, tab, view }) {
       <div class="ad-hello">
         <div class="ad-who">
           <span class="ad-avatar">${initial}</span>
-          <div><h1>Hi, <b>${esc(name)}</b></h1><p>${USER.code ? `<button type="button" class="ucode" data-copycode="${esc(USER.code)}" title="Your user code — tap to copy. Tell it to support so they can find your account.">${esc(USER.code)} ${ICON.copy}</button> ` : ""}${esc(USER.username.includes("@") ? USER.username : "Member since " + new Date(USER.createdAt).toLocaleDateString("en-GB", { month: "short", year: "numeric" }))}</p></div>
+          <div><h1>Hi, <b>${esc(name)}</b></h1><p>${USER.code ? `<button type="button" class="ucode" data-copycode="${esc(USER.code)}" title="Your user code — tap to copy. Tell it to support so they can find your account.">${esc(USER.code)} ${ICON.copy}</button> ` : ""}${esc(USER.username.includes("@") ? USER.username : "Member since " + new Date(USER.createdAt).toLocaleDateString("en-GB", { timeZone: SITE_TZ, month: "short", year: "numeric" }))}</p></div>
         </div>
         <div class="ad-icons">
           <a class="ad-ibtn" href="#settings" title="Settings" aria-label="Settings">${ICON.gear}</a>

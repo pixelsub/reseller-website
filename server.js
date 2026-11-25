@@ -1645,9 +1645,11 @@ async function adminUpload(req, res) {
 const expensesFile = path.join(storeDir, "expenses.json");
 const PAID = ["processing", "delivered"];
 
+// Days are Bangladesh days (UTC+6, no daylight saving) — whatever time zone the server runs in
+const bdDay = (iso) => new Date(new Date(iso).getTime() + 6 * 3600e3).toISOString().slice(0, 10);
 function accounting(fromStr, toStr) {
-  const from = fromStr ? new Date(fromStr + "T00:00:00").getTime() : 0;
-  const to = toStr ? new Date(toStr + "T23:59:59.999").getTime() : Infinity;
+  const from = fromStr ? new Date(fromStr + "T00:00:00+06:00").getTime() : 0;
+  const to = toStr ? new Date(toStr + "T23:59:59.999+06:00").getTime() : Infinity;
   const inRange = (iso) => { const t = new Date(iso).getTime(); return t >= from && t <= to; };
   const orders = loadOrders().filter((o) => PAID.includes(o.status) && inRange(o.createdAt));
   const { PRODUCTS } = catalog();
@@ -1657,7 +1659,7 @@ function accounting(fromStr, toStr) {
   const T = { orders: orders.length, revenue: 0, cost: 0, profit: 0, items: 0, missingCost: 0, guestRevenue: 0, resellerRevenue: 0, discounts: 0 };
   const byDay = {}, byProduct = {}, byMethod = {};
   for (const o of orders) {
-    const day = o.createdAt.slice(0, 10);
+    const day = bdDay(o.createdAt);
     const d = (byDay[day] = byDay[day] || { date: day, orders: 0, revenue: 0, cost: 0, profit: 0 });
     const m = (byMethod[o.payment.method] = byMethod[o.payment.method] || { method: o.payment.method, orders: 0, revenue: 0 });
     d.orders++; m.orders++; m.revenue += o.total;
@@ -1677,7 +1679,7 @@ function accounting(fromStr, toStr) {
   for (const x of Object.values(byDay)) x.profit = x.revenue - x.cost;
   for (const x of Object.values(byProduct)) x.profit = x.revenue - x.cost;
 
-  const expenses = readJson(expensesFile, []).filter((e) => inRange(e.date + "T12:00:00"));
+  const expenses = readJson(expensesFile, []).filter((e) => inRange(e.date + "T12:00:00+06:00"));
   const expenseTotal = expenses.reduce((a, e) => a + e.amount, 0);
   const topups = loadTopups().filter((t) => t.status === "completed" && inRange(t.completedAt || t.createdAt));
   const balances = readJson(usersFile, []).reduce((a, u) => a + (u.balance || 0), 0);

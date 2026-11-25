@@ -2,7 +2,11 @@
    Orders, Stock, Balance requests and Resellers live in app.js (initAdmin). */
 
 const pct = (n) => `${(Number(n) || 0).toFixed(1)}%`;
-const isoDay = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+// Days are Bangladesh days (UTC+6, no daylight saving), whatever the admin's own time zone
+const BD_MS = 6 * 3600e3;
+const isoDay = (d) => new Date(d.getTime() + BD_MS).toISOString().slice(0, 10);
+const bdNoon = (day) => new Date(day + "T12:00:00+06:00"); // a day's midday, for stepping day by day
+const nextDay = (t) => new Date(t.getTime() + 864e5);
 const slugify = (s) => String(s).toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
 const jsonPost = (api, url, body) => api(url, { method: "POST", body: JSON.stringify(body) })
   .then(async (r) => ({ ok: r.ok, data: await r.json().catch(() => ({})) }));
@@ -11,11 +15,11 @@ const jsonPost = (api, url, body) => api(url, { method: "POST", body: JSON.strin
 let dashRange = { key: "30d", from: "", to: "" };
 
 function rangeDates(key) {
-  const today = new Date(), d = (n) => { const x = new Date(); x.setDate(x.getDate() - n); return isoDay(x); };
+  const today = new Date(), d = (n) => isoDay(new Date(today.getTime() - n * 864e5));
   if (key === "today") return { from: isoDay(today), to: isoDay(today) };
   if (key === "7d") return { from: d(6), to: isoDay(today) };
   if (key === "30d") return { from: d(29), to: isoDay(today) };
-  if (key === "month") return { from: isoDay(new Date(today.getFullYear(), today.getMonth(), 1)), to: isoDay(today) };
+  if (key === "month") return { from: isoDay(today).slice(0, 8) + "01", to: isoDay(today) };
   return { from: "", to: "" };
 }
 
@@ -25,7 +29,7 @@ function dailyChart(days, from, to) {
   const list = [];
   if (from && to) {
     const map = Object.fromEntries(days.map((d) => [d.date, d]));
-    for (let t = new Date(from + "T12:00:00"); isoDay(t) <= to; t.setDate(t.getDate() + 1)) {
+    for (let t = bdNoon(from); isoDay(t) <= to; t = nextDay(t)) {
       const k = isoDay(t);
       list.push(map[k] || { date: k, revenue: 0, profit: 0, orders: 0 });
     }
@@ -97,7 +101,7 @@ async function adminDashboard({ el, api, reload }) {
   const filled = [];
   if (from && to) {
     const map = Object.fromEntries(A.byDay.map((d) => [d.date, d]));
-    for (let t = new Date(from + "T12:00:00"); isoDay(t) <= to; t.setDate(t.getDate() + 1)) filled.push(map[isoDay(t)] || { date: isoDay(t), revenue: 0, profit: 0, orders: 0 });
+    for (let t = bdNoon(from); isoDay(t) <= to; t = nextDay(t)) filled.push(map[isoDay(t)] || { date: isoDay(t), revenue: 0, profit: 0, orders: 0 });
   } else filled.push(...A.byDay);
 
   const health = await api("/api/admin/health").then((r) => r.json()).catch(() => ({}));
