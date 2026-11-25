@@ -199,3 +199,41 @@
   .kpi-grid { grid-template-columns: 1fr 1fr; }
   .two-col { grid-template-columns: 1fr; }
 }
+
+/* ---- Same look as the profile dashboard (blue card, rounded tiles, pill tabs) ---- */
+.admin-body { background: #f3f6fc; }
+.admin-body .card { border-radius: 16px; }
+.admin-side { gap: 18px; background: #fff; }
+.admin-card { min-height: 0; padding: 14px 16px; gap: 14px; border-radius: 16px; grid-template-rows: auto auto; }
+.admin-card::after { width: 60px; height: 60px; top: 38%; right: 8%; }
+.admin-card .ad-card-bal strong { font-size: 22px; }
+.admin-card .ad-brand { font-size: 13.5px; }
+.admin-card .ad-brand img { width: 22px; height: 22px; }
+.admin-side nav button { border-radius: 99px; padding: 10px 14px; transition: background .15s, color .15s; }
+.admin-side nav button.active { background: linear-gradient(110deg, #1d4ed8, #3b82f6); color: #fff; box-shadow: 0 6px 14px rgba(37, 99, 235, .28); }
+.admin-side nav button.active svg { color: #fff; }
+.admin-side nav button.active .badge-n { background: #fff; color: var(--primary); }
+.admin-side-foot .btn { border-radius: 99px; }
+.admin-head { gap: 12px; }
+.admin-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.admin-title small { display: block; font-size: 12px; font-weight: 600; color: var(--muted); }
+.admin-title h1 { font-size: 24px; line-height: 1.15; }
+.admin-head > .btn { border-radius: 99px; }
+.filter-row > .tab { border-color: transparent; background: #fff; box-shadow: var(--shadow); }
+.filter-row > .tab.active { background: linear-gradient(110deg, #1d4ed8, #3b82f6); color: #fff; box-shadow: 0 4px 12px rgba(37, 99, 235, .3); }
+.kpi { border-radius: 16px; }
+.kpi.hero, .kpi.hero.neg {
+  border: 0; color: #fff;
+  background: radial-gradient(circle at 85% 30%, rgba(147, 197, 253, .45), transparent 50%), linear-gradient(135deg, #1e3a8a, #2563eb 60%, #3b82f6);
+  box-shadow: 0 12px 26px rgba(37, 99, 235, .25);
+}
+.kpi.hero.neg { background: linear-gradient(135deg, #991b1b, #dc2626 60%, #f87171); box-shadow: 0 12px 26px rgba(220, 38, 38, .25); }
+.kpi.hero span, .kpi.hero small { color: rgba(255, 255, 255, .85); }
+.kpi.hero strong, .kpi.hero.neg strong { color: #fff; }
+.admin-body .table-wrap { border-radius: 16px; overflow: auto; }
+.admin-body th { background: #f8fafd; }
+.admin-body tbody tr:hover td { background: #f8fafd; }
+.order-search { border-radius: 99px; box-shadow: var(--shadow); }
+.order-search .btn { border-radius: 99px; }
+.modal { border-radius: 18px; }
+@media (max-width: 860px) { .admin-card { display: none; } }

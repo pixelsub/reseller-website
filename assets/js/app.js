@@ -227,6 +227,10 @@ const ICON = {
   minus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg>',
   copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
+  logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>',
+  chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6"/></svg>',
+  api: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m8 8-5 4 5 4M16 8l5 4-5 4M14 5l-4 14"/></svg>',
 };
 
 const waLink = (text) => `https://wa.me/${SITE.whatsapp}${text ? "?text=" + encodeURIComponent(text) : ""}`;
@@ -1014,6 +1018,10 @@ function initAdmin() {
       <div class="admin-layout">
         <aside class="admin-side">
           <a class="logo" href="index.html" target="_blank" rel="noopener"><img class="logo-mark" src="assets/img/logo.png" alt=""><span class="logo-text">PIXEL<b>SUB</b></span></a>
+          <div class="ad-card admin-card">
+            <div class="ad-card-top"><span class="ad-brand"><img src="assets/img/logo.png" alt="">${esc(SITE.name)}</span><span class="ad-pill">ADMIN</span></div>
+            <div class="ad-card-bal"><small>Control panel</small><strong>Hi, Admin</strong></div>
+          </div>
           <nav>${SECTIONS.map(([k, l, ic]) => `<button data-sec="${k}">${ic}<span>${l}</span><em class="badge-n" data-badge="${k}" hidden></em></button>`).join("")}</nav>
           <div class="admin-side-foot">
             <a class="btn btn-outline btn-block" href="index.html" target="_blank" rel="noopener">View site</a>
@@ -1034,7 +1042,8 @@ function initAdmin() {
     const ub = $('[data-badge="users"]', outer);
     if (ub) { ub.textContent = pendingApps || ""; ub.hidden = !pendingApps; }
     const title = (SECTIONS.find(([k]) => k === section) || [])[1] || "";
-    return `<div class="admin-head"><h1>${title}</h1><button class="btn btn-outline" id="reload">Reload</button></div>`;
+    const icon = (SECTIONS.find(([k]) => k === section) || [])[2] || "";
+    return `<div class="admin-head"><div class="admin-title"><span class="ad-ico">${icon}</span><div><small>Admin panel</small><h1>${title}</h1></div></div><button class="btn btn-outline" id="reload">Reload</button></div>`;
   };
   const bindBar = () => { const r = $("#reload", root); if (r) r.addEventListener("click", load); };
 
@@ -1403,6 +1412,128 @@ window.initAdmin = initAdmin;
 const tempPwNote = () => (USER && USER.tempPassword
   ? `<div class="temp-pw-note"><b>You're using a temporary password.</b> Choose your own password now — type the temporary one as "Current password".</div>` : "");
 
+/* ---------- Profile dashboard (shared by buyers and resellers) ---------- */
+const DUR_DAYS = { day: 1, week: 7, month: 30, year: 365 };
+// "Individual – 6 Months" → 180. Lifetime / unknown → null (not tracked as expiring)
+const durationDays = (plan) => {
+  const m = /(\d+)\s*(day|week|month|year)s?\b/i.exec(String(plan || "").split("–").pop());
+  return m ? Number(m[1]) * DUR_DAYS[m[2].toLowerCase()] : null;
+};
+// Delivered accounts that haven't run out yet, soonest expiry first
+function activeAccounts(orders) {
+  const now = Date.now(), out = [];
+  for (const o of orders) {
+    if (o.status === "cancelled" || o.refunded) continue;
+    for (const i of o.items || []) {
+      const start = i.deliveredAt || (o.status === "delivered" && o.deliveredAt);
+      const days = durationDays(i.plan);
+      if (!start || !days) continue;
+      const end = Date.parse(start) + days * 864e5;
+      if (!(end > now)) continue;
+      out.push({ item: i, order: o, days, end, left: Math.ceil((end - now) / 864e5) });
+    }
+  }
+  return out.sort((a, b) => a.end - b.end);
+}
+const itemIcon = (slug, name) => {
+  const p = getProduct(slug);
+  return p ? productIcon(p, "sm") : `<span class="p-icon sm">${esc(String(name || "?").slice(0, 2))}</span>`;
+};
+const orderLink = (o) => `order.html?id=${encodeURIComponent(o.id)}&t=${encodeURIComponent(o.token)}`;
+const accOrderRow = (o) => `
+  <a class="ad-row" href="${orderLink(o)}">
+    ${itemIcon(o.items[0] && o.items[0].slug, o.items[0] && o.items[0].name)}
+    <div class="ad-row-info"><b>${o.items.map((i) => esc(i.name) + (i.qty > 1 ? " ×" + i.qty : "")).join(", ")}</b>
+      <small><span class="ad-ref">${esc(o.id)}</span> ${fmtDate(o.createdAt)}</small></div>
+    <div class="ad-row-end"><b>${money(o.total)}</b><span class="status ${o.waitingAdmin ? "s-pending" : "s-" + o.status}">${statusText(o)}</span></div>
+  </a>`;
+const accOrdersView = (orders) => orders.length
+  ? `<div class="card ad-list">${orders.map(accOrderRow).join("")}</div>`
+  : `<div class="card ad-empty"><b>No orders yet</b><p class="muted small">Your orders and account details will show up here.</p><a class="btn btn-primary" href="index.html#products">Browse products</a></div>`;
+
+function accDashboard({ orders, card, banner, tabs, tab, view }) {
+  const name = shortName(USER.username), initial = esc(name.charAt(0).toUpperCase() || "?");
+  const active = activeAccounts(orders);
+  const done = orders.filter((o) => o.status === "delivered");
+  const deliveredQty = done.reduce((a, o) => a + o.items.reduce((b, i) => b + i.qty, 0), 0);
+  const ring = orders.length ? done.length / orders.length : 0;
+  const soon = active.filter((a) => a.left <= 7).length;
+  const stack = [...new Set(active.map((a) => a.item.slug))].slice(0, 3);
+  return `
+    <div class="ad">
+      <div class="ad-hello">
+        <div class="ad-who">
+          <span class="ad-avatar">${initial}</span>
+          <div><h1>Hi, <b>${esc(name)}</b></h1><p>${esc(USER.username.includes("@") ? USER.username : "Member since " + new Date(USER.createdAt).toLocaleDateString("en-GB", { month: "short", year: "numeric" }))}</p></div>
+        </div>
+        <div class="ad-icons">
+          <a class="ad-ibtn" href="#settings" title="Settings" aria-label="Settings">${ICON.gear}</a>
+          <button class="ad-ibtn" type="button" data-logout title="Log out" aria-label="Log out">${ICON.logout}</button>
+        </div>
+      </div>
+
+      <div class="ad-top">
+        <div class="ad-card">
+          <div class="ad-card-top">
+            <span class="ad-brand"><img src="assets/img/logo.png" alt="">${esc(SITE.name)}</span>
+            <span class="ad-pill">${card.badge}</span>
+          </div>
+          <div class="ad-card-bal"><small>${card.label}</small><strong>${card.value}</strong></div>
+          <div class="ad-card-foot">
+            <span class="ad-chip"><i>${initial}</i>${esc(name.toUpperCase())}</span>
+            ${card.action}
+          </div>
+        </div>
+        <div class="ad-tiles">
+          <a class="ad-tile" href="#orders">
+            <span class="ad-ring" style="--p:${ring.toFixed(3)}"><b>${orders.length}</b></span>
+            <b>Order history</b><small>${deliveredQty} account${deliveredQty === 1 ? "" : "s"} delivered</small>${ICON.chev}
+          </a>
+          <button class="ad-tile" type="button" data-go="active">
+            <span class="ad-stack">${stack.length ? stack.map((s) => itemIcon(s, (active.find((a) => a.item.slug === s) || {}).item?.name)).join("") : `<span class="ad-ico">${ICON.box}</span>`}</span>
+            <b>My active accounts</b><small>${active.length} running</small>${ICON.chev}
+          </button>
+          <a class="ad-tile" href="${tgLink()}" target="_blank" rel="noopener">
+            <span class="ad-ico">${ICON.shield}</span>
+            <b>Warranty claim</b><small>Message support</small>${ICON.chev}
+          </a>
+          <a class="ad-banner" href="${banner.href}">
+            <span class="ad-ico">${ICON.api}</span>
+            <span><b>${banner.title}</b><small>${banner.text}</small></span>${ICON.chev}
+          </a>
+        </div>
+      </div>
+
+      <div class="ad-main">
+        <section id="active">
+          <div class="ad-sec-head"><h3>My active accounts <span class="ad-count">${active.length}</span></h3>${soon ? `<span class="ad-soon">Expiring soon</span>` : ""}</div>
+          ${active.length ? `<div class="card ad-list">${active.map((a) => {
+            const pct = Math.max(3, Math.min(100, (a.left / a.days) * 100)), warn = a.left <= 7;
+            const dur = String(a.item.plan).split("–").pop().trim();
+            return `<div class="ad-acc">
+              ${itemIcon(a.item.slug, a.item.name)}
+              <div class="ad-acc-info">
+                <b>${esc(a.item.name)} — ${esc(dur)}${a.item.qty > 1 ? ` <small>×${a.item.qty}</small>` : ""}</b>
+                <span class="ad-bar ${warn ? "warn" : ""}"><i style="width:${pct.toFixed(1)}%"></i></span>
+                <small class="${warn ? "ad-warn" : ""}">Expires in ${a.left} day${a.left === 1 ? "" : "s"}</small>
+              </div>
+              ${warn && getProduct(a.item.slug) ? `<a class="btn btn-primary ad-renew" href="product.html?p=${encodeURIComponent(a.item.slug)}">Renew</a>` : `<a class="ad-open" href="${orderLink(a.order)}" title="Open order">${ICON.chev}</a>`}
+            </div>`;
+          }).join("")}</div>`
+          : `<div class="card ad-empty"><b>No active accounts</b><p class="muted small">Accounts you buy show here with how many days they have left.</p><a class="btn btn-outline" href="index.html#products">Browse products</a></div>`}
+        </section>
+        <section class="ad-panel">
+          <div class="ad-seg">${tabs.map(([k, l]) => `<a class="${k === tab ? "on" : ""}" href="#${k}">${l}</a>`).join("")}</div>
+          <div id="acc-view">${view}</div>
+        </section>
+      </div>
+    </div>`;
+}
+function bindDashboard() {
+  $$("[data-logout]").forEach((b) => b.addEventListener("click", async () => { await fetch("/api/auth/logout", { method: "POST" }); location.href = "index.html"; }));
+  $$("[data-go]").forEach((b) => b.addEventListener("click", () => $("#" + b.dataset.go).scrollIntoView({ behavior: "smooth", block: "start" })));
+}
+
 /* ---------- Page: Profile of a member whose reseller application isn't approved (yet) ---------- */
 async function initApplicantAccount() {
   const root = $("#account-root");
@@ -1465,13 +1596,6 @@ async function initApplicantAccount() {
       </div>`;
   };
 
-  const ordersView = () => orders.length ? `<div class="card cart-list">${orders.map((o) => `
-    <a class="cart-line my-order" href="order.html?id=${encodeURIComponent(o.id)}&t=${encodeURIComponent(o.token)}">
-      <div class="cl-info"><b>${esc(o.id)}</b><span class="muted small">${fmtDate(o.createdAt)} · ${o.items.map((i) => esc(i.name) + " ×" + i.qty).join(", ")}</span></div>
-      <span class="status ${o.waitingAdmin ? "s-pending" : "s-" + o.status}">${statusText(o)}</span>
-      <strong class="cl-total">${money(o.total)}</strong>
-    </a>`).join("")}</div>` : `<div class="empty card"><h2>No orders yet</h2><a class="btn btn-primary" href="index.html#products">Browse products</a></div>`;
-
   const settingsView = () => `
     <div class="acc-two">
       <form class="card acc-form" id="pw-form">
@@ -1492,18 +1616,24 @@ async function initApplicantAccount() {
       </div>
     </div>`;
 
-  const views = { status: statusView, orders: ordersView, settings: settingsView };
+  const views = { status: statusView, orders: () => accOrdersView(orders), settings: settingsView };
   const render = () => {
     const tab = TABS.some(([k]) => "#" + k === location.hash) ? location.hash.slice(1) : (USER.tempPassword ? "settings" : member() ? "orders" : "status");
-    root.innerHTML = `
-      <div class="acc-head">
-        <div><span class="eyebrow">Member profile</span><h1 class="page-title">${esc(USER.username)}</h1></div>
-        ${member()
-          ? `<div class="acc-bal"><small>Account</small><b style="color:var(--ink)">Buyer</b></div>`
-          : `<div class="acc-bal"><small>Reseller status</small><b class="${USER.status === "rejected" ? "amt-minus" : ""}" style="color:${USER.status === "rejected" ? "var(--red)" : "#b45309"}">${USER.status === "rejected" ? "Not approved" : "Pending"}</b></div>`}
-      </div>
-      <div class="tabs acc-tabs">${TABS.map(([k, l]) => `<a class="tab ${k === tab ? "active" : ""}" href="#${k}">${l}</a>`).join("")}</div>
-      <div id="acc-view">${views[tab]()}</div>`;
+    const spent = r2(orders.filter((o) => o.status === "delivered" || o.status === "processing").reduce((a, o) => a + o.total, 0));
+    const rej = USER.status === "rejected";
+    root.innerHTML = accDashboard({
+      orders, tab, view: views[tab](),
+      tabs: [TABS[1], TABS[0], TABS[2]].map(([k, l]) => [k, k === "orders" ? "Orders" : k === "status" ? (member() ? "Reseller" : "Application") : l]),
+      card: {
+        badge: member() ? "BUYER" : rej ? "NOT APPROVED" : "PENDING",
+        label: "Total spent", value: money(spent),
+        action: `<a class="ad-cta" href="#status">${member() ? ICON.plus + " Become reseller" : rej ? "Fix application" : ICON.clock + " Under review"}</a>`,
+      },
+      banner: member()
+        ? { href: "#status", title: "Become a reseller", text: `Reseller prices on ${SITE.bulkMinQty}+ pieces and a wallet` }
+        : { href: "landing.html", title: "Wholesale & bot", text: "Resell our products with your own bot" },
+    });
+    bindDashboard();
     const af = $("#apply-form");
     if (af) {
       af.type.addEventListener("change", () => (af.link.placeholder = PH[af.type.value]));
@@ -1541,10 +1671,12 @@ async function initAccount() {
   if (!USER) { location.replace("login.html?next=" + encodeURIComponent("account.html" + location.hash)); return; }
   if (!USER.reseller) return initApplicantAccount();
   const root = $("#account-root");
-  const TABS = [["overview", "Overview"], ["add", "Add balance"], ["orders", "My orders"], ["history", "Balance history"], ["settings", "Settings"]];
+  const TABS = [["balance", "Balance"], ["orders", "Orders"], ["settings", "Settings"]];
+  const VIEWS = ["balance", "add", "orders", "settings"];
+  const OLD_HASH = { overview: "balance", history: "balance" }; // links from before the redesign
   let W = null, orders = [];
   const TOPUP_LABEL = { pending: "Waiting for check", completed: "Added", rejected: "Rejected" };
-  const TX_LABEL = { topup: "Balance added", order: "Order payment", refund: "Refund", adjust: "Adjustment" };
+  const TX_LABEL = { topup: "Balance top-up", order: "Purchase", refund: "Refund", adjust: "Adjustment" };
 
   const load = async () => {
     const [w, o] = await Promise.all([fetch("/api/wallet").then((r) => r.json()), fetch("/api/my/orders").then((r) => r.json())]);
@@ -1552,12 +1684,15 @@ async function initAccount() {
     $$(".nav-user b:not(.pend)").forEach((b) => (b.textContent = money(w.balance)));
   };
 
-  const orderRows = (list) => list.length ? list.map((o) => `
-    <a class="cart-line my-order" href="order.html?id=${encodeURIComponent(o.id)}&t=${encodeURIComponent(o.token)}">
-      <div class="cl-info"><b>${esc(o.id)}</b><span class="muted small">${fmtDate(o.createdAt)} · ${o.items.map((i) => esc(i.name) + " ×" + i.qty).join(", ")}</span></div>
-      <span class="status ${o.waitingAdmin ? "s-pending" : "s-" + o.status}">${statusText(o)}</span>
-      <strong class="cl-total">${money(o.total)}</strong>
-    </a>`).join("") : `<p class="muted" style="padding:18px 0">No orders yet. <a href="index.html#products">Browse products</a></p>`;
+  const txRow = (x) => {
+    const plus = x.amount >= 0;
+    return `<div class="ad-row ad-tx">
+      <span class="ad-tx-ico ${plus ? "plus" : ""}">${plus ? ICON.plus : ICON.cart}</span>
+      <div class="ad-row-info"><b>${TX_LABEL[x.type] || esc(x.type)}</b>
+        <small>${x.note ? `<span class="ad-ref">${esc(x.note)}</span> ` : ""}${fmtDate(x.createdAt)}</small></div>
+      <div class="ad-row-end"><b class="${plus ? "amt-plus" : "amt-minus"}">${plus ? "+" : "−"}${money(Math.abs(x.amount))}</b><small>${money(x.balanceAfter)}</small></div>
+    </div>`;
+  };
 
   const topupRows = (list) => list.map((t) => `
     <div class="cart-line topup-line">
@@ -1571,21 +1706,17 @@ async function initAccount() {
     </div>`).join("");
 
   const views = {
-    overview: () => `
-      <div class="acc-grid">
-        <div class="card balance-card">
-          <span>Available balance</span>
-          <strong>${money(W.balance)}</strong>
-          <a class="btn btn-light" href="#add">${ICON.plus} Add balance</a>
-        </div>
-        <div class="card stat"><span>Total orders</span><strong>${W.stats.orders}</strong></div>
-        <div class="card stat"><span>Total spent</span><strong>${money(W.stats.spent)}</strong></div>
-        <div class="card stat g"><span>Saved with reseller price</span><strong>${money(W.stats.saved)}</strong></div>
+    balance: () => `
+      <div class="ad-stats">
+        <div><small>Total spent</small><b>${money(W.stats.spent)}</b></div>
+        <div><small>Saved (reseller price)</small><b class="amt-plus">${money(W.stats.saved)}</b></div>
+        <a href="#add" class="ad-stats-cta">${ICON.plus} Top up</a>
       </div>
-      <div class="acc-section-head"><h3>Recent orders</h3><a href="#orders">View all</a></div>
-      <div class="card cart-list">${orderRows(orders.slice(0, 5))}</div>`,
+      ${W.ledger.length ? `<div class="card ad-list">${W.ledger.map(txRow).join("")}</div>`
+        : `<div class="card ad-empty"><b>No balance activity yet</b><p class="muted small">Top up your balance to pay for orders instantly.</p><a class="btn btn-primary" href="#add">Top up</a></div>`}`,
 
     add: () => `
+      <a class="ad-back" href="#balance">${ICON.back} Balance</a>
       <div class="acc-two">
         <form class="card acc-form" id="topup-form">
           <h3>Add balance</h3>
@@ -1602,17 +1733,7 @@ async function initAccount() {
         </div>
       </div>`,
 
-    orders: () => `<div class="card cart-list">${orderRows(orders)}</div>`,
-
-    history: () => `
-      <div class="card table-wrap">
-        ${W.ledger.length ? `<table>
-          <thead><tr><th>Date</th><th>Type</th><th>Details</th><th>Amount</th><th>Balance</th></tr></thead>
-          <tbody>${W.ledger.map((x) => `<tr>
-            <td class="muted">${fmtDate(x.createdAt)}</td><td>${TX_LABEL[x.type] || esc(x.type)}</td><td class="muted">${esc(x.note || "")}</td>
-            <td class="${x.amount >= 0 ? "amt-plus" : "amt-minus"}">${x.amount >= 0 ? "+" : "−"}${money(Math.abs(x.amount))}</td><td>${money(x.balanceAfter)}</td></tr>`).join("")}</tbody>
-        </table>` : `<p class="muted" style="padding:20px">No balance activity yet.</p>`}
-      </div>`,
+    orders: () => accOrdersView(orders),
 
     settings: () => `
       <div class="acc-two">
@@ -1636,14 +1757,14 @@ async function initAccount() {
   };
 
   const render = () => {
-    const tab = TABS.some(([k]) => "#" + k === location.hash) ? location.hash.slice(1) : (USER.tempPassword ? "settings" : "overview");
-    root.innerHTML = `
-      <div class="acc-head">
-        <div><span class="eyebrow">Reseller profile</span><h1 class="page-title">${esc(USER.username)}</h1></div>
-        <div class="acc-bal"><small>Balance</small><b>${money(W.balance)}</b></div>
-      </div>
-      <div class="tabs acc-tabs">${TABS.map(([k, l]) => `<a class="tab ${k === tab ? "active" : ""}" href="#${k}">${l}</a>`).join("")}</div>
-      <div id="acc-view">${views[tab]()}</div>`;
+    const h = location.hash.slice(1), want = OLD_HASH[h] || h;
+    const tab = VIEWS.includes(want) ? want : (USER.tempPassword ? "settings" : "balance");
+    root.innerHTML = accDashboard({
+      orders, tabs: TABS, tab: tab === "add" ? "balance" : tab, view: views[tab](),
+      card: { badge: "RESELLER", label: "Balance", value: money(W.balance), action: `<a class="ad-cta" href="#add">${ICON.plus} Top up</a>` },
+      banner: { href: "landing.html", title: "Wholesale & bot", text: "Resell our products with your own bot" },
+    });
+    bindDashboard();
     bindView(tab);
   };
 
@@ -1677,7 +1798,7 @@ async function initAccount() {
         await load(); render();
       }));
     }
-    if (tab === "settings") {
+    if (tab === "settings" && $("#pw-form")) {
       $("#acc-logout").addEventListener("click", async () => { await fetch("/api/auth/logout", { method: "POST" }); location.href = "index.html"; });
       $("#pw-form").addEventListener("submit", async (e) => {
         e.preventDefault();
