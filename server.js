@@ -904,14 +904,15 @@ function metaPurchase(order) {
 /* ---------- API ---------- */
 // Prices one order line for this customer (shared by the website checkout and the reseller API).
 // Returns { item } or { error, code }.
-function priceLine(p, v, qty, reseller, SITE, stock) {
+// alwaysBulk: reseller API orders get the bulk price even for 1 piece
+function priceLine(p, v, qty, reseller, SITE, stock, { alwaysBulk = false } = {}) {
   if (!p || !v || !Number.isInteger(qty) || qty < 1) return { error: "A product in your cart is no longer available." };
   const left = available(stock, p.slug, v);
   if (qty > left) return { error: left ? `${p.name} (${v.pkg} – ${v.duration}) only has ${left} left.` : `${p.name} (${v.pkg} – ${v.duration}) is out of stock.` };
   const quote = v.source ? supplierQuote(v, SITE, qty) : null;
   if (v.source && !quote) return { error: `${p.name} is temporarily unavailable. Please try again in a minute.`, code: 503 };
   if (quote && qty < quote.minQty) return { error: `${p.name} (${v.pkg} – ${v.duration}): minimum ${quote.minQty} per order.` };
-  const bulk = reseller && v.bulkPrice != null && v.bulkPrice < v.price && qty >= (SITE.bulkMinQty || 2);
+  const bulk = reseller && v.bulkPrice != null && v.bulkPrice < v.price && (alwaysBulk || qty >= (SITE.bulkMinQty || 2));
   const unit = bulk ? v.bulkPrice : v.price;
   return { item: { slug: p.slug, key: planKey(p.slug, v), name: p.name, plan: `${v.pkg} – ${v.duration}`, qty, unit, regular: v.price, total: r2(unit * qty),
     cost: quote ? quote.unitCost : v.cost ?? null, // cost price at the time of sale, for profit reports (never shown to customers)
@@ -1038,11 +1039,12 @@ const apiOrder = (o) => ({
   delivery_note: o.delivery || "", // everything delivered, as text (also covers accounts the admin typed in by hand)
 });
 function apiProducts(user) {
-  const { SITE, PRODUCTS } = liveCatalog(), stock = loadStock(), bulkMin = SITE.bulkMinQty || 2;
+  const { SITE, PRODUCTS } = liveCatalog(), stock = loadStock();
   return PRODUCTS.flatMap((p) => p.variants.map((v) => {
     const bulk = v.bulkPrice != null && v.bulkPrice < v.price ? v.bulkPrice : null;
+    // API orders always get the reseller (bulk) price, even for 1 piece
     return { product_id: apiPlanId(planKey(p.slug, v)), product: p.name, slug: p.slug, category: p.category, plan: v.pkg, duration: v.duration,
-      price: v.price, bulk_price: bulk, bulk_min_quantity: bulk != null ? bulkMin : null, currency: apiCur(SITE.currency),
+      price: bulk ?? v.price, regular_price: v.price, currency: apiCur(SITE.currency),
       stock: available(stock, p.slug, v), delivery: v.manual ? "manual" : "instant", warranty: v.warranty || null };
   }));
 }
@@ -1060,7 +1062,7 @@ async function apiCreateOrder(req, res, user) {
   let hit = find();
   if (!hit) return send(res, 404, { error: "Unknown product_id." });
   if (hit.v.source) { await refreshSupplier(30_000); hit = find(); if (!hit) return send(res, 404, { error: "Unknown product_id." }); }
-  const priced = priceLine(hit.p, hit.v, qty, true, hit.SITE, loadStock());
+  const priced = priceLine(hit.p, hit.v, qty, true, hit.SITE, loadStock(), { alwaysBulk: true });
   if (priced.error) return send(res, priced.code || 400, { error: priced.error });
   const item = priced.item;
   const order = {

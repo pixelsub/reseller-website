@@ -1848,7 +1848,7 @@ async function initAccount() {
       return `
       <div class="card acc-form api-key">
         <h3>${ICON.api} Your API key</h3>
-        <p class="muted small">Sell our products from your own Telegram bot or website. Orders placed through the API are paid from your balance and the accounts come back in the reply — same reseller prices as on this site.</p>
+        <p class="muted small">Sell our products from your own Telegram bot or website. Orders placed through the API are paid from your balance and the accounts come back in the reply — always at the reseller (bulk) price, even for 1 piece.</p>
         ${newKey ? `<div class="api-new"><b>Copy your key now — it's shown only once.</b>${copyRow("API key", newKey, newKey)}</div>` : ""}
         ${k ? `
           <div class="sum-row"><span>Key</span><b class="acct-id">${esc(k.prefix)}…</b></div>
@@ -1863,7 +1863,7 @@ async function initAccount() {
         <h3>How to use it</h3>
         <p class="small">Base URL <code>${esc(base)}</code> · send your key in the <code>X-API-Key</code> header. Answers are JSON. Keep the key on your server or bot — never put it in a web page, anyone could use your balance.</p>
         <div class="api-ep"><span class="m get">GET</span><code>/me</code><small>Your balance and user code</small></div>
-        <div class="api-ep"><span class="m get">GET</span><code>/products</code><small>Every plan: <code>product_id</code>, your price, bulk price, live stock</small></div>
+        <div class="api-ep"><span class="m get">GET</span><code>/products</code><small>Every plan: <code>product_id</code>, your reseller price, live stock</small></div>
         <div class="api-ep"><span class="m post">POST</span><code>/orders</code><small>Buy: <code>{"product_id", "quantity", "reference"}</code> — paid from balance</small></div>
         <div class="api-ep"><span class="m get">GET</span><code>/orders</code><small>Your recent orders (<code>?limit=50</code>)</small></div>
         <div class="api-ep"><span class="m get">GET</span><code>/orders/PS-12345678</code><small>One order with its accounts</small></div>
@@ -1877,7 +1877,7 @@ async function initAccount() {
   "id": "PS-48213907",
   "reference": "tg-58213",
   "status": "delivered",
-  "total": 1.44,
+  "total": 1.2,
   "items": [{
     "product_id": "p_1a2b3c4d5e",
     "name": "CapCut Pro",
@@ -1890,7 +1890,7 @@ async function initAccount() {
         <ul class="api-notes small">
           <li><b>status</b>: <code>delivered</code> = accounts are in <code>accounts</code>. <code>processing</code> = paid, being prepared (manual plans or no stock yet) — check <code>GET /orders/{id}</code> again later.</li>
           <li><b>reference</b> (optional, your own order number): send the same one again and you get the same order back — never charged twice, safe to retry after a timeout.</li>
-          <li>Price: <code>price</code> for 1 piece; <code>bulk_price</code> when you buy <code>bulk_min_quantity</code> or more in one order.</li>
+          <li>Price: <code>price</code> is what you pay per piece — the reseller price, even when you buy just 1. <code>regular_price</code> is the normal site price, for comparison.</li>
           <li>Errors come as <code>{"error": "..."}</code>: 401 wrong key · 402 not enough balance · 404 unknown product/order · 400 out of stock or bad input · 429 more than 120 requests a minute.</li>
           <li>Top up your balance on the <a href="#add">Balance</a> tab.</li>
         </ul>
