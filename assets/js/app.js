@@ -1051,10 +1051,6 @@ function initAdmin() {
       <div class="admin-layout">
         <aside class="admin-side">
           <a class="logo" href="index.html" target="_blank" rel="noopener"><img class="logo-mark" src="assets/img/logo.png" alt=""><span class="logo-text">PIXEL<b>SUB</b></span></a>
-          <div class="ad-card admin-card">
-            <div class="ad-card-top"><span class="ad-brand"><img src="assets/img/logo.png" alt="">${esc(SITE.name)}</span><span class="ad-pill">ADMIN</span></div>
-            <div class="ad-card-bal"><small>Control panel</small><strong>Hi, Admin</strong></div>
-          </div>
           <nav>${SECTIONS.map(([k, l, ic]) => `<button data-sec="${k}">${ic}<span>${l}</span><em class="badge-n" data-badge="${k}" hidden></em></button>`).join("")}</nav>
           <div class="admin-side-foot">
             <a class="btn btn-outline btn-block" href="index.html" target="_blank" rel="noopener">View site</a>
@@ -1781,8 +1777,9 @@ async function initAccount() {
   if (!USER) { location.replace("login.html?next=" + encodeURIComponent("account.html" + location.hash)); return; }
   if (!USER.reseller) return initApplicantAccount();
   const root = $("#account-root");
-  const TABS = [["balance", "Balance"], ["orders", "Orders"], ["settings", "Settings"]];
-  const VIEWS = ["balance", "add", "orders", "settings"];
+  const TABS = [["balance", "Balance"], ["orders", "Orders"], ["api", "API"], ["settings", "Settings"]];
+  const VIEWS = ["balance", "add", "orders", "api", "settings"];
+  let newKey = ""; // full API key, shown once right after it's created
   const OLD_HASH = { overview: "balance", history: "balance" }; // links from before the redesign
   let W = null, orders = [];
   const TOPUP_LABEL = { pending: "Waiting for check", completed: "Added", rejected: "Rejected" };
@@ -1845,6 +1842,61 @@ async function initAccount() {
 
     orders: () => accOrdersView(orders),
 
+    api: () => {
+      const k = USER.api, base = location.origin + "/api/v1";
+      const code = (s) => `<pre class="api-code">${esc(s)}</pre>`;
+      return `
+      <div class="card acc-form api-key">
+        <h3>${ICON.api} Your API key</h3>
+        <p class="muted small">Sell our products from your own Telegram bot or website. Orders placed through the API are paid from your balance and the accounts come back in the reply — same reseller prices as on this site.</p>
+        ${newKey ? `<div class="api-new"><b>Copy your key now — it's shown only once.</b>${copyRow("API key", newKey, newKey)}</div>` : ""}
+        ${k ? `
+          <div class="sum-row"><span>Key</span><b class="acct-id">${esc(k.prefix)}…</b></div>
+          <div class="sum-row"><span>Created</span><span>${fmtDate(k.createdAt)}</span></div>
+          <div class="sum-row"><span>Last used</span><span>${k.lastUsedAt ? fmtDate(k.lastUsedAt) : "Never"}</span></div>
+          <div class="api-btns"><button class="btn btn-outline" data-apikey="create">New key</button><button class="btn btn-outline danger" data-apikey="delete">Delete key</button></div>
+          <p class="muted small">Lost it? Make a new key — the old one stops working right away.</p>`
+        : `<button class="btn btn-primary btn-block" data-apikey="create">${ICON.plus} Create API key</button>`}
+      </div>
+
+      <div class="card acc-form api-docs">
+        <h3>How to use it</h3>
+        <p class="small">Base URL <code>${esc(base)}</code> · send your key in the <code>X-API-Key</code> header. Answers are JSON. Keep the key on your server or bot — never put it in a web page, anyone could use your balance.</p>
+        <div class="api-ep"><span class="m get">GET</span><code>/me</code><small>Your balance and user code</small></div>
+        <div class="api-ep"><span class="m get">GET</span><code>/products</code><small>Every plan: <code>product_id</code>, your price, bulk price, live stock</small></div>
+        <div class="api-ep"><span class="m post">POST</span><code>/orders</code><small>Buy: <code>{"product_id", "quantity", "reference"}</code> — paid from balance</small></div>
+        <div class="api-ep"><span class="m get">GET</span><code>/orders</code><small>Your recent orders (<code>?limit=50</code>)</small></div>
+        <div class="api-ep"><span class="m get">GET</span><code>/orders/PS-12345678</code><small>One order with its accounts</small></div>
+
+        <h4>1. Get the products</h4>
+        ${code(`curl ${base}/products \\\n  -H "X-API-Key: YOUR_KEY"`)}
+        <h4>2. Place an order</h4>
+        ${code(`curl -X POST ${base}/orders \\\n  -H "X-API-Key: YOUR_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"product_id":"p_1a2b3c4d5e","quantity":1,"reference":"tg-58213"}'`)}
+        <p class="small">Answer:</p>
+        ${code(`{
+  "id": "PS-48213907",
+  "reference": "tg-58213",
+  "status": "delivered",
+  "total": 1.44,
+  "items": [{
+    "product_id": "p_1a2b3c4d5e",
+    "name": "CapCut Pro",
+    "plan": "Individual – 1 Month",
+    "quantity": 1,
+    "accounts": ["email@mail.com:password"]
+  }]
+}`)}
+        <h4>Good to know</h4>
+        <ul class="api-notes small">
+          <li><b>status</b>: <code>delivered</code> = accounts are in <code>accounts</code>. <code>processing</code> = paid, being prepared (manual plans or no stock yet) — check <code>GET /orders/{id}</code> again later.</li>
+          <li><b>reference</b> (optional, your own order number): send the same one again and you get the same order back — never charged twice, safe to retry after a timeout.</li>
+          <li>Price: <code>price</code> for 1 piece; <code>bulk_price</code> when you buy <code>bulk_min_quantity</code> or more in one order.</li>
+          <li>Errors come as <code>{"error": "..."}</code>: 401 wrong key · 402 not enough balance · 404 unknown product/order · 400 out of stock or bad input · 429 more than 120 requests a minute.</li>
+          <li>Top up your balance on the <a href="#add">Balance</a> tab.</li>
+        </ul>
+      </div>`;
+    },
+
     settings: () => `
       <div class="acc-two">
         <form class="card acc-form" id="pw-form">
@@ -1873,8 +1925,9 @@ async function initAccount() {
     root.innerHTML = accDashboard({
       orders, tabs: TABS, tab: tab === "add" ? "balance" : tab, view: views[tab](),
       card: { badge: "RESELLER", label: "Balance", value: money(W.balance), action: `<a class="ad-cta" href="#add">${ICON.plus} Top up</a>` },
-      banner: { href: "landing.html", title: "Wholesale & bot", text: "Resell our products with your own bot" },
+      banner: { href: "#api", title: "Reseller & API", text: "Sell our products from your own bot or website" },
     });
+    if (tab !== "api") newKey = ""; // the full key is shown only until you leave the tab
     bindDashboard();
     bindView(tab);
   };
@@ -1907,6 +1960,22 @@ async function initAccount() {
         if (!r.ok) toast(esc(d.error || "Check failed"));
         else if (d.status === "completed") toast(`${money(d.amount)} added to your balance`);
         await load(); render();
+      }));
+    }
+    if (tab === "api") {
+      $$("#acc-view [data-copy]").forEach((c) => c.addEventListener("click", () => copyText(c.dataset.copy, c)));
+      $$("[data-apikey]").forEach((b) => b.addEventListener("click", async () => {
+        const del = b.dataset.apikey === "delete";
+        if (USER.api && !confirm(del ? "Delete your API key? Your bot or website stops working until you make a new one."
+          : "Make a new key? The old key stops working right away — update it in your bot or website.")) return;
+        b.disabled = true;
+        const r = await fetch(del ? "/api/my/api-key/delete" : "/api/my/api-key", { method: "POST" });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { b.disabled = false; return toast(esc(d.error || "Something went wrong")); }
+        newKey = d.key || "";
+        USER.api = d.api;
+        toast(del ? "API key deleted" : "API key created");
+        render();
       }));
     }
     if (tab === "settings" && $("#pw-form")) {

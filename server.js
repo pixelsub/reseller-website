@@ -694,6 +694,7 @@ function backfillUserCodes() {
 const publicUser = (u) => ({
   username: u.username, code: u.code || "", status: userStatus(u), reseller: isReseller(u), balance: u.balance || 0, createdAt: u.createdAt,
   tempPassword: !!u.tempPassword,
+  api: u.apiKey ? { prefix: u.apiKey.prefix, createdAt: u.apiKey.createdAt, lastUsedAt: u.apiKey.lastUsedAt || null } : null, // never the key itself
   application: u.application ? { type: u.application.type, link: u.application.link, note: u.application.note || "", contact: u.application.contact || "",
     submittedAt: u.application.submittedAt, rejectNote: u.rejectNote || "" } : null,
 });
@@ -901,6 +902,21 @@ function metaPurchase(order) {
 }
 
 /* ---------- API ---------- */
+// Prices one order line for this customer (shared by the website checkout and the reseller API).
+// Returns { item } or { error, code }.
+function priceLine(p, v, qty, reseller, SITE, stock) {
+  if (!p || !v || !Number.isInteger(qty) || qty < 1) return { error: "A product in your cart is no longer available." };
+  const left = available(stock, p.slug, v);
+  if (qty > left) return { error: left ? `${p.name} (${v.pkg} – ${v.duration}) only has ${left} left.` : `${p.name} (${v.pkg} – ${v.duration}) is out of stock.` };
+  const quote = v.source ? supplierQuote(v, SITE, qty) : null;
+  if (v.source && !quote) return { error: `${p.name} is temporarily unavailable. Please try again in a minute.`, code: 503 };
+  if (quote && qty < quote.minQty) return { error: `${p.name} (${v.pkg} – ${v.duration}): minimum ${quote.minQty} per order.` };
+  const bulk = reseller && v.bulkPrice != null && v.bulkPrice < v.price && qty >= (SITE.bulkMinQty || 2);
+  const unit = bulk ? v.bulkPrice : v.price;
+  return { item: { slug: p.slug, key: planKey(p.slug, v), name: p.name, plan: `${v.pkg} – ${v.duration}`, qty, unit, regular: v.price, total: r2(unit * qty),
+    cost: quote ? quote.unitCost : v.cost ?? null, // cost price at the time of sale, for profit reports (never shown to customers)
+    ...(v.source ? { supplier: { type: v.source.type, variantId: v.source.variantId } } : {}) } };
+}
 async function createOrder(req, res) {
   const body = await readBody(req, 3_000_000); // room for a payment screenshot
   // No guest checkout: every order belongs to an account (free buyer account or reseller)
@@ -934,19 +950,9 @@ async function createOrder(req, res) {
   const stock = loadStock();
   for (const it of body.items) {
     const p = PRODUCTS.find((x) => x.slug === it.slug);
-    const v = p && p.variants[it.vi];
-    const qty = Number.parseInt(it.qty, 10);
-    if (!v || !Number.isInteger(qty) || qty < 1) return send(res, 400, { error: "A product in your cart is no longer available." });
-    const left = available(stock, p.slug, v);
-    if (qty > left) return send(res, 400, { error: left ? `${p.name} (${v.pkg} – ${v.duration}) only has ${left} left.` : `${p.name} (${v.pkg} – ${v.duration}) is out of stock.` });
-    const quote = v.source ? supplierQuote(v, SITE, qty) : null;
-    if (v.source && !quote) return send(res, 503, { error: `${p.name} is temporarily unavailable. Please try again in a minute.` });
-    if (quote && qty < quote.minQty) return send(res, 400, { error: `${p.name} (${v.pkg} – ${v.duration}): minimum ${quote.minQty} per order.` });
-    const bulk = reseller && v.bulkPrice != null && v.bulkPrice < v.price && qty >= bulkMin;
-    const unit = bulk ? v.bulkPrice : v.price;
-    items.push({ slug: p.slug, key: planKey(p.slug, v), name: p.name, plan: `${v.pkg} – ${v.duration}`, qty, unit, regular: v.price, total: r2(unit * qty),
-      cost: quote ? quote.unitCost : v.cost ?? null, // cost price at the time of sale, for profit reports (never shown to customers)
-      ...(v.source ? { supplier: { type: v.source.type, variantId: v.source.variantId } } : {}) });
+    const r = priceLine(p, p && p.variants[it.vi], Number.parseInt(it.qty, 10), reseller, SITE, stock);
+    if (r.error) return send(res, r.code || 400, { error: r.error });
+    items.push(r.item);
   }
   const total = r2(items.reduce((a, i) => a + i.total, 0));
   const regular = r2(items.reduce((a, i) => a + i.regular * i.qty, 0));
@@ -993,6 +999,124 @@ async function createOrder(req, res) {
   console.log(`New order ${order.id}: ${SITE.currency}${total} via ${payment.method}${payment.verified ? " (verified)" : ""}`);
   if (order.status === "processing") await supplierDeliver(order.id); // buy supplier items now so the customer gets them instantly
   send(res, 201, { id: order.id, token: order.token, verified: !!payment.verified, payUrl: payment.payUrl });
+}
+
+/* ---------- Reseller API (v1) ----------
+   Approved resellers create a key on their profile and use it from their own bot or website server:
+     X-API-Key: psk_...   (or Authorization: Bearer psk_...)
+   GET  /api/v1/me              balance and account
+   GET  /api/v1/products        every plan with the reseller's price and live stock
+   POST /api/v1/orders          { product_id, quantity, reference? } — paid from balance, accounts returned
+   GET  /api/v1/orders          recent orders (?limit=1..100)
+   GET  /api/v1/orders/:id      one order (accounts once delivered)
+   Only a hash of the key is stored; the full key is shown once when it's created. */
+const apiCur = (c) => (!c || c === "$" ? "USD" : c); // the API always says "USD", never "$"
+const apiPlanId = (key) => "p_" + crypto.createHash("sha1").update(key).digest("hex").slice(0, 10);
+const apiLimits = new Map(); // key hash -> { n, start }: 120 requests per minute
+function apiAuth(req) {
+  const raw = String(req.headers["x-api-key"] || (String(req.headers.authorization || "").match(/^Bearer\s+(\S+)/i) || [])[1] || "").trim();
+  if (!raw) return { code: 401, error: "Missing API key. Send it in the X-API-Key header." };
+  const hash = sha256(raw);
+  const now = Date.now(), l = apiLimits.get(hash);
+  if (l && now - l.start < 60_000) { if (++l.n > 120) return { code: 429, error: "Too many requests — max 120 per minute." }; }
+  else apiLimits.set(hash, { n: 1, start: now });
+  const users = readJson(usersFile, []);
+  const u = users.find((x) => x.apiKey && x.apiKey.hash === hash);
+  if (!u) return { code: 401, error: "Invalid API key." };
+  if (!isReseller(u)) return { code: 403, error: "Your reseller account is not active." };
+  if (!u.apiKey.lastUsedAt || now - Date.parse(u.apiKey.lastUsedAt) > 60_000) { // don't rewrite users.json on every call
+    u.apiKey.lastUsedAt = new Date(now).toISOString();
+    writeJson(usersFile, users);
+  }
+  return { user: u };
+}
+const apiOrder = (o) => ({
+  id: o.id, reference: o.apiRef || null, status: o.status, refunded: !!o.refunded,
+  created_at: o.createdAt, delivered_at: o.deliveredAt || null, currency: apiCur(o.currency), total: o.total,
+  items: o.items.map((i) => ({ product_id: i.key ? apiPlanId(i.key) : null, name: i.name, plan: i.plan, quantity: i.qty, unit_price: i.unit, total: i.total,
+    accounts: Array.isArray(i.delivered) ? i.delivered : [] })),
+  delivery_note: o.delivery || "", // everything delivered, as text (also covers accounts the admin typed in by hand)
+});
+function apiProducts(user) {
+  const { SITE, PRODUCTS } = liveCatalog(), stock = loadStock(), bulkMin = SITE.bulkMinQty || 2;
+  return PRODUCTS.flatMap((p) => p.variants.map((v) => {
+    const bulk = v.bulkPrice != null && v.bulkPrice < v.price ? v.bulkPrice : null;
+    return { product_id: apiPlanId(planKey(p.slug, v)), product: p.name, slug: p.slug, category: p.category, plan: v.pkg, duration: v.duration,
+      price: v.price, bulk_price: bulk, bulk_min_quantity: bulk != null ? bulkMin : null, currency: apiCur(SITE.currency),
+      stock: available(stock, p.slug, v), delivery: v.manual ? "manual" : "instant", warranty: v.warranty || null };
+  }));
+}
+async function apiCreateOrder(req, res, user) {
+  const body = await readBody(req);
+  const ref = str(body.reference, 64);
+  const mine = (o) => o.customer && o.customer.username === user.username;
+  // Same reference again (e.g. the bot retried after a timeout) -> the existing order, never a second charge
+  const again = () => ref && loadOrders().find((o) => mine(o) && o.apiRef === ref);
+  if (again()) return send(res, 200, apiOrder(again()));
+  const pid = str(body.product_id, 40), qty = Number.parseInt(body.quantity ?? 1, 10);
+  if (!pid) return send(res, 400, { error: "product_id is required (see GET /api/v1/products)." });
+  if (!Number.isInteger(qty) || qty < 1 || qty > 100) return send(res, 400, { error: "quantity must be a whole number from 1 to 100." });
+  const find = () => { const { SITE, PRODUCTS } = liveCatalog(); for (const p of PRODUCTS) for (const v of p.variants) if (apiPlanId(planKey(p.slug, v)) === pid) return { SITE, p, v }; return null; };
+  let hit = find();
+  if (!hit) return send(res, 404, { error: "Unknown product_id." });
+  if (hit.v.source) { await refreshSupplier(30_000); hit = find(); if (!hit) return send(res, 404, { error: "Unknown product_id." }); }
+  const priced = priceLine(hit.p, hit.v, qty, true, hit.SITE, loadStock());
+  if (priced.error) return send(res, priced.code || 400, { error: priced.error });
+  const item = priced.item;
+  const order = {
+    id: newOrderId(), token: crypto.randomBytes(16).toString("hex"), createdAt: new Date().toISOString(),
+    status: "processing", currency: hit.SITE.currency, items: [item], total: item.total, discount: r2(item.regular * item.qty - item.total),
+    customer: { username: user.username, reseller: true },
+    payment: { method: "Balance", sender: "", trx: "", verified: true, verifiedAt: new Date().toISOString(), verifyNote: "Paid from balance (API)." },
+    delivery: "", source: "api", ...(ref ? { apiRef: ref } : {}), meta: {},
+  };
+  // No await from here to the save: the reference check, the charge and the order are one step
+  if (again()) return send(res, 200, apiOrder(again()));
+  try { walletApply(user.username, -order.total, "order", `Order ${order.id} (API)`, order.id); }
+  catch (e) { return send(res, 402, { error: e.message === "Not enough balance." ? `Not enough balance — this order costs ${hit.SITE.currency}${order.total}.` : e.message }); }
+  autoDeliver(order);
+  const orders = loadOrders();
+  orders.unshift(order);
+  saveOrders(orders);
+  console.log(`New API order ${order.id}: ${hit.SITE.currency}${order.total} by ${user.username}`);
+  const done = (order.status === "processing" && (await supplierDeliver(order.id))) || loadOrders().find((o) => o.id === order.id) || order;
+  send(res, 201, apiOrder(done));
+}
+async function apiV1(req, res, parts, url) {
+  res.setHeader("Cache-Control", "no-store");
+  const auth = apiAuth(req);
+  if (auth.error) return send(res, auth.code, { error: auth.error });
+  const u = auth.user, { SITE } = catalog();
+  const path1 = parts.slice(2).join("/");
+  if (req.method === "GET" && path1 === "me") return send(res, 200, { email: u.username, user_code: u.code || null, balance: u.balance || 0, currency: apiCur(SITE.currency) });
+  if (req.method === "GET" && path1 === "products") {
+    if (liveCatalog().PRODUCTS.some((p) => p.variants.some((v) => v.source))) await refreshSupplier();
+    return send(res, 200, { products: apiProducts(u) });
+  }
+  if (req.method === "POST" && path1 === "orders") return apiCreateOrder(req, res, u);
+  if (req.method === "GET" && path1 === "orders") {
+    const limit = Math.min(100, Math.max(1, Number.parseInt(url.searchParams.get("limit"), 10) || 20));
+    return send(res, 200, { orders: loadOrders().filter((o) => o.customer && o.customer.username === u.username).slice(0, limit).map(apiOrder) });
+  }
+  if (req.method === "GET" && parts[2] === "orders" && parts.length === 4) {
+    const o = loadOrders().find((x) => x.id === parts[3] && x.customer && x.customer.username === u.username);
+    return o ? send(res, 200, apiOrder(o)) : send(res, 404, { error: "Order not found." });
+  }
+  send(res, 404, { error: "Unknown endpoint. See the API tab on your profile for the docs." });
+}
+// Profile: create (or replace) / delete the reseller's API key. The full key is returned only here, once.
+async function myApiKey(req, res, action) {
+  const me = sessionUser(req);
+  if (!me) return send(res, 401, { error: "Please log in." });
+  if (!isReseller(me)) return send(res, 403, { error: "The API is for approved resellers." });
+  const users = readJson(usersFile, []);
+  const u = users.find((x) => x.username === me.username);
+  if (action === "delete") { delete u.apiKey; writeJson(usersFile, users); return send(res, 200, publicUser(u)); }
+  const key = "psk_" + crypto.randomBytes(24).toString("hex");
+  u.apiKey = { hash: sha256(key), prefix: key.slice(0, 10), createdAt: new Date().toISOString() };
+  writeJson(usersFile, users);
+  console.log(`API key created for ${u.username}`);
+  send(res, 200, { ...publicUser(u), key });
 }
 
 // Customer asks to re-check a payment (limited to once every 15 s per order)
@@ -1696,6 +1820,9 @@ function pxImportInto(cat, picked, categoryOf, group) {
 async function api(req, res, url) {
   const parts = url.pathname.split("/").filter(Boolean); // ["api", ...]
   const route = req.method + " " + parts.slice(1).join("/");
+  if (parts[1] === "v1") return apiV1(req, res, parts, url);
+  if (route === "POST my/api-key") return myApiKey(req, res, "create");
+  if (route === "POST my/api-key/delete") return myApiKey(req, res, "delete");
   if (route === "POST auth/signup") return signup(req, res);
   if (route === "POST auth/login") return login(req, res);
   if (route === "POST auth/apply") return applyAgain(req, res);

@@ -203,12 +203,8 @@
 /* ---- Same look as the profile dashboard (blue card, rounded tiles, pill tabs) ---- */
 .admin-body { background: #f3f6fc; }
 .admin-body .card { border-radius: 16px; }
-.admin-side { gap: 18px; background: #fff; }
-.admin-card { min-height: 0; padding: 14px 16px; gap: 14px; border-radius: 16px; grid-template-rows: auto auto; }
-.admin-card::after { width: 60px; height: 60px; top: 38%; right: 8%; }
-.admin-card .ad-card-bal strong { font-size: 22px; }
-.admin-card .ad-brand { font-size: 13.5px; }
-.admin-card .ad-brand img { width: 22px; height: 22px; }
+.admin-side { gap: 18px; background: #fff; overflow-y: auto; }
+.admin-side > * { flex-shrink: 0; } /* short window: scroll the menu instead of squashing it */
 .admin-side nav button { border-radius: 99px; padding: 10px 14px; transition: background .15s, color .15s; }
 .admin-side nav button.active { background: linear-gradient(110deg, #1d4ed8, #3b82f6); color: #fff; box-shadow: 0 6px 14px rgba(37, 99, 235, .28); }
 .admin-side nav button.active svg { color: #fff; }
@@ -258,4 +254,3 @@
 .ud-adj { display: inline-flex; align-items: center; gap: 3px; margin: 4px 0 0; padding: 0; justify-self: start; font-size: 12.5px; }
 .ud-adj svg { width: 13px; height: 13px; }
 td.tu-actions [data-adj] svg { width: 15px; height: 15px; }
-@media (max-width: 860px) { .admin-card { display: none; } }
