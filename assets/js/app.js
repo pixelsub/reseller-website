@@ -381,7 +381,8 @@ function modal({ title, body, confirm = "Confirm", cancel = "Cancel", danger = f
     document.body.appendChild(wrap);
     const form = $("form", wrap);
     const close = (val) => { wrap.remove(); document.removeEventListener("keydown", onKey); resolve(val); };
-    const onKey = (e) => { if (e.key === "Escape") close(null); };
+    // Escape closes only the top dialog (a balance dialog can open over the account details)
+    const onKey = (e) => { if (e.key === "Escape" && wrap === $$(".modal-backdrop").pop()) close(null); };
     document.addEventListener("keydown", onKey);
     const cancelBtn = $("[data-cancel]", wrap);
     if (cancelBtn) cancelBtn.addEventListener("click", () => close(null));
@@ -1004,6 +1005,7 @@ function initAdmin() {
   let orderQuery = ""; // search box on the Orders page
   let pendingApps = 0; // reseller applications waiting for approval (sidebar badge)
   let userTab = "pending";
+  let userQuery = ""; // search box on the Resellers page
   const aoWarn = {};   // per-order "couldn't deliver" messages from the last save
   const normId = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
@@ -1168,6 +1170,43 @@ function initAdmin() {
   const TYPE_LABEL = { website: "Website / online store", bot: "Telegram / WhatsApp bot", other: "Facebook page / group / other" };
   const KIND_LABEL = { member: "Buyer", approved: "Reseller", pending: "Reseller · pending", rejected: "Reseller · rejected" };
   const LEDGER_LABEL = { topup: "Balance added", order: "Order payment", refund: "Refund", adjust: "Admin adjustment" };
+  // Add or deduct a reseller's balance by hand (e.g. they paid you directly). Resolves with the new balance, or null.
+  const balanceDialog = async (username, current) => {
+    const shown = modal({
+      title: `Balance · ${esc(username)}`, confirm: "Save",
+      body: `
+        <p class="muted small">Current balance <b class="bal-now">${money(current)}</b></p>
+        <div class="bal-mode" role="radiogroup">
+          <label><input type="radio" name="mode" value="add" checked><span>${ICON.plus} Add</span></label>
+          <label><input type="radio" name="mode" value="deduct"><span>${ICON.minus} Deduct</span></label>
+        </div>
+        <label class="bal-field">Amount (${SITE.currency})<input name="amount" type="number" min="0.01" max="100000" step="0.01" required placeholder="e.g. 10" inputmode="decimal"></label>
+        <div class="chips bal-chips">${[5, 10, 20, 50, 100].map((a) => `<button type="button" class="tab" data-q="${a}">${money(a)}</button>`).join("")}</div>
+        <label class="bal-field">Note <small class="muted">(they see it in their balance history)</small><input name="note" maxlength="200" placeholder="e.g. Paid via bKash"></label>
+        <p class="bal-after small"></p>`,
+    });
+    const f = $$(".modal-backdrop form").pop();
+    const amt = f.amount, after = $(".bal-after", f), save = $(".modal-actions .btn-primary", f);
+    const sign = () => (f.querySelector("[name=mode]:checked").value === "deduct" ? -1 : 1);
+    const refresh = () => {
+      const a = r2(Number(amt.value) || 0), next = r2(current + sign() * a);
+      after.innerHTML = a ? `New balance: <b class="${next < 0 ? "amt-minus" : ""}">${next < 0 ? "−" + money(-next) : money(next)}</b>${next < 0 ? " — more than they have" : ""}` : "";
+      save.textContent = a ? `${sign() > 0 ? "Add" : "Deduct"} ${money(a)}` : "Save";
+      save.disabled = next < 0;
+    };
+    amt.addEventListener("input", refresh);
+    $$("[name=mode]", f).forEach((r) => r.addEventListener("change", refresh));
+    $$("[data-q]", f).forEach((b) => b.addEventListener("click", () => { amt.value = b.dataset.q; refresh(); amt.focus(); }));
+    amt.focus();
+    if (!(await shown)) return null;
+    const amount = r2(sign() * (Number(amt.value) || 0));
+    const r = await api(`/api/admin/users/${encodeURIComponent(username)}/adjust`, { method: "POST",
+      body: JSON.stringify({ amount, note: f.note.value.trim() || (amount > 0 ? "Balance added by admin" : "Balance deducted by admin") }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(esc(d.error || "Could not change the balance")); return null; }
+    toast(`${amount > 0 ? "Added" : "Deducted"} ${money(Math.abs(amount))} · new balance ${money(d.balance)}`);
+    return d.balance;
+  };
   // Account details: balance, every order (when, which products, how much) and the balance history
   const showUserDetails = async (username) => {
     const r = await api(`/api/admin/users/${encodeURIComponent(username)}`);
@@ -1175,9 +1214,9 @@ function initAdmin() {
     if (!r.ok) return toast(esc(d.error || "Could not load this account"));
     const u = d.user, s = d.stats;
     const body = `
-      <p class="muted small">${KIND_LABEL[u.status] || "Account"} · joined ${fmtDate(u.createdAt)}${u.tempPassword ? ' · <span class="status s-pending">Temp password</span>' : ""}</p>
+      <p class="muted small">${u.code ? `<span class="ucode">${esc(u.code)}</span> · ` : ""}${KIND_LABEL[u.status] || "Account"} · joined ${fmtDate(u.createdAt)}${u.tempPassword ? ' · <span class="status s-pending">Temp password</span>' : ""}</p>
       <div class="ud-stats">
-        <div><small>Balance</small><b class="amt-plus">${money(u.balance)}</b></div>
+        <div><small>Balance</small><b class="amt-plus" id="ud-bal">${money(u.balance)}</b>${u.status === "approved" ? `<button type="button" class="link-btn ud-adj" data-udadj>${ICON.plus} Add / deduct</button>` : ""}</div>
         <div><small>Orders</small><b>${s.orders}</b>${s.orders ? `<small>${s.delivered} delivered</small>` : ""}</div>
         <div><small>Total spent</small><b>${money(s.spent)}</b><small>paid orders only</small></div>
         <div><small>Last order</small><b class="ud-date">${s.lastOrderAt ? fmtDate(s.lastOrderAt) : "—"}</b></div>
@@ -1200,6 +1239,14 @@ function initAdmin() {
             <td class="${x.amount >= 0 ? "amt-plus" : "amt-minus"}">${x.amount >= 0 ? "+" : "−"}${money(Math.abs(x.amount))}</td><td>${money(x.balanceAfter)}</td></tr>`).join("")}</tbody>
         </table></div>` : ""}`;
     const shown = modal({ title: esc(u.username), body, confirm: "Close", cancel: "", wide: true });
+    let changed = false;
+    const ub = $(".modal-backdrop [data-udadj]");
+    if (ub) ub.addEventListener("click", async () => {
+      const next = await balanceDialog(u.username, u.balance);
+      if (next === null) return;
+      u.balance = next; changed = true;
+      $("#ud-bal").textContent = money(next);
+    });
     // An order ID opens that order on the Orders page
     $$(".modal-backdrop [data-goorder]").forEach((b) => b.addEventListener("click", () => {
       orderQuery = b.dataset.goorder; filter = "all"; section = "orders";
@@ -1208,6 +1255,7 @@ function initAdmin() {
       load();
     }));
     await shown;
+    if (changed) load(); // refresh the list's balance column
   };
   const loadUsersView = async (users, pendingTopups) => {
     const groups = {
@@ -1216,17 +1264,25 @@ function initAdmin() {
       rejected: users.filter((u) => u.status === "rejected"),
       member: users.filter((u) => u.status === "member"), // buyer accounts that never applied
     };
-    const list = groups[userTab] || [];
     const tabs = [["pending", "Pending"], ["approved", "Approved"], ["rejected", "Rejected"], ["member", "Buyers"]];
+    // Search: user code (U-482913, "482913" or "u482913"), email/username, store link or contact — across all tabs
+    const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const matches = (u, q) => {
+      const n = norm(q), t = q.toLowerCase();
+      return (n && norm(u.code).includes(n)) || u.username.toLowerCase().includes(t)
+        || (u.application && [u.application.link, u.application.contact].some((x) => String(x || "").toLowerCase().includes(t)));
+    };
     const link = (a) => (/^https?:\/\//i.test(a.link) ? `<a href="${esc(a.link)}" target="_blank" rel="noopener nofollow">${esc(a.link)}</a>` : esc(a.link));
     const appCell = (u) => u.application ? `<b>${esc(TYPE_LABEL[u.application.type] || u.application.type)}</b><br>${link(u.application)}${u.application.contact ? `<br><span class="muted small">Contact: ${esc(u.application.contact)}</span>` : ""}${u.application.note ? `<br><span class="muted small">${esc(u.application.note)}</span>` : ""}`
       : `<span class="muted small">${u.status === "member" ? "Buyer account — hasn't applied" : "— (older account)"}</span>`;
-    root.innerHTML = sectionBar(pendingTopups) + `
-      <div class="tabs admin-tabs" style="margin-bottom:14px">${tabs.map(([k, l]) => `<button class="tab ${userTab === k ? "active" : ""}" data-ut="${k}">${l} (${groups[k].length})</button>`).join("")}</div>
-      ${list.length ? `<div class="card table-wrap"><table>
+    const KIND = { pending: "Pending", approved: "Reseller", rejected: "Rejected", member: "Buyer" };
+    const listHtml = () => {
+      const q = userQuery.trim();
+      const list = q ? users.filter((u) => matches(u, q)) : groups[userTab] || [];
+      return (q ? `<p class="muted small search-note">${list.length} account${list.length === 1 ? "" : "s"} found for “${esc(q)}” in all tabs</p>` : "") + (list.length ? `<div class="card table-wrap"><table>
         <thead><tr><th>Account</th><th>Where they sell</th><th>Applied</th><th>Orders</th><th>Balance</th><th></th></tr></thead>
-        <tbody>${list.map((u) => `<tr data-u="${esc(u.username)}" class="user-row" title="Click to see orders, balance and history">
-          <td><button type="button" class="acct-link" data-details>${esc(u.username)}</button><br><span class="muted small">joined ${fmtDate(u.createdAt)}</span>${u.tempPassword ? '<br><span class="status s-pending">Temp password</span>' : ""}
+        <tbody>${list.map((u) => `<tr data-u="${esc(u.username)}" data-bal="${Number(u.balance) || 0}" class="user-row" title="Click to see orders, balance and history">
+          <td>${u.code ? `<span class="ucode">${esc(u.code)}</span>${q ? ` <span class="status s-${u.status === "approved" ? "delivered" : u.status === "rejected" ? "cancelled" : "pending"}">${KIND[u.status] || ""}</span>` : ""}<br>` : ""}<button type="button" class="acct-link" data-details>${esc(u.username)}</button><br><span class="muted small">joined ${fmtDate(u.createdAt)}</span>${u.tempPassword ? '<br><span class="status s-pending">Temp password</span>' : ""}
             <br><button class="link-btn" style="margin-left:0;padding:0" data-resetpw>Reset password</button></td>
           <td>${appCell(u)}${u.application && u.application.rejectNote ? `<br><span class="bal-short small">Rejected: ${esc(u.application.rejectNote)}</span>` : ""}</td>
           <td class="muted">${u.application ? fmtDate(u.application.submittedAt) : "—"}</td>
@@ -1234,11 +1290,34 @@ function initAdmin() {
           <td class="tu-actions">
             ${u.status !== "approved" && u.status !== "member" ? '<button class="btn btn-primary" data-rv="approve">Approve</button>' : ""}
             ${u.status !== "rejected" && u.status !== "member" ? `<button class="btn btn-outline" data-rv="reject">${u.status === "approved" ? "Revoke" : "Reject"}</button>` : ""}
-            ${u.status === "approved" ? `<div class="adj"><input type="number" step="0.01" placeholder="+5 or -2"><input type="text" placeholder="Note"><button class="btn btn-outline" data-adj>Balance</button></div>` : ""}
+            ${u.status === "approved" ? `<button class="btn btn-primary" data-adj>${ICON.plus} Balance</button>` : ""}
           </td>
-        </tr>`).join("")}</tbody></table></div>` : `<div class="empty card">${userTab === "pending" ? "No applications waiting." : userTab === "member" ? "No buyer accounts yet." : `No ${userTab} resellers.`}</div>`}`;
+        </tr>`).join("")}</tbody></table></div>` : `<div class="empty card">${q ? "No account matches this search." : userTab === "pending" ? "No applications waiting." : userTab === "member" ? "No buyer accounts yet." : `No ${userTab} resellers.`}</div>`);
+    };
+    root.innerHTML = sectionBar(pendingTopups) + `
+      <form class="order-search" id="user-search" role="search">${ICON.search}
+        <input name="q" value="${esc(userQuery)}" placeholder="Search by user code (U-123456), email, store link or contact" autocomplete="off" spellcheck="false">
+        <button type="button" class="btn btn-outline" id="user-search-clear" ${userQuery ? "" : "hidden"}>Clear</button>
+      </form>
+      <div class="tabs admin-tabs" style="margin-bottom:14px">${tabs.map(([k, l]) => `<button class="tab ${!userQuery.trim() && userTab === k ? "active" : ""}" data-ut="${k}">${l} (${groups[k].length})</button>`).join("")}</div>
+      <div id="users-list">${listHtml()}</div>`;
     bindBar();
-    $$("[data-ut]", root).forEach((b) => b.addEventListener("click", () => { userTab = b.dataset.ut; load(); }));
+    bindRows();
+    const sf = $("#user-search", root), si = sf.q, clear = $("#user-search-clear", root);
+    sf.addEventListener("submit", (e) => e.preventDefault());
+    const rerender = () => {
+      userQuery = si.value;
+      clear.hidden = !userQuery;
+      $$("[data-ut]", root).forEach((b) => b.classList.toggle("active", !userQuery.trim() && b.dataset.ut === userTab));
+      $("#users-list", root).innerHTML = listHtml();
+      bindRows();
+    };
+    si.addEventListener("input", rerender);
+    clear.addEventListener("click", () => { si.value = ""; rerender(); si.focus(); });
+    $$("[data-ut]", root).forEach((b) => b.addEventListener("click", () => { userTab = b.dataset.ut; userQuery = ""; load(); }));
+  };
+  // Row actions on the Resellers list (bound again after every search re-render)
+  function bindRows() {
     // Click the name or anywhere on the row (except its buttons and inputs) to open the account's details
     $$("tr.user-row", root).forEach((tr) => tr.addEventListener("click", (e) => {
       if (e.target.closest("input, select, textarea, a, button:not([data-details])")) return;
@@ -1255,12 +1334,8 @@ function initAdmin() {
       load();
     }));
     $$("[data-adj]", root).forEach((b) => b.addEventListener("click", async () => {
-      const tr = b.closest("tr"), [amt, note] = $$("input", tr);
-      if (!amt.value || !confirm(`Change ${tr.dataset.u}'s balance by ${amt.value}?`)) return;
-      const r = await api(`/api/admin/users/${encodeURIComponent(tr.dataset.u)}/adjust`, { method: "POST", body: JSON.stringify({ amount: Number(amt.value), note: note.value }) });
-      const d = await r.json().catch(() => ({}));
-      toast(r.ok ? `New balance: ${money(d.balance)}` : esc(d.error || "Failed"));
-      load();
+      const tr = b.closest("tr");
+      if (await balanceDialog(tr.dataset.u, Number(tr.dataset.bal) || 0) !== null) load();
     }));
     // Forgot password: make a temporary password, show it once, the admin sends it to the customer
     $$("[data-resetpw]", root).forEach((b) => b.addEventListener("click", async () => {
@@ -1495,7 +1570,7 @@ function accDashboard({ orders, card, banner, tabs, tab, view }) {
       <div class="ad-hello">
         <div class="ad-who">
           <span class="ad-avatar">${initial}</span>
-          <div><h1>Hi, <b>${esc(name)}</b></h1><p>${esc(USER.username.includes("@") ? USER.username : "Member since " + new Date(USER.createdAt).toLocaleDateString("en-GB", { month: "short", year: "numeric" }))}</p></div>
+          <div><h1>Hi, <b>${esc(name)}</b></h1><p>${USER.code ? `<button type="button" class="ucode" data-copycode="${esc(USER.code)}" title="Your user code — tap to copy. Tell it to support so they can find your account.">${esc(USER.code)} ${ICON.copy}</button> ` : ""}${esc(USER.username.includes("@") ? USER.username : "Member since " + new Date(USER.createdAt).toLocaleDateString("en-GB", { month: "short", year: "numeric" }))}</p></div>
         </div>
         <div class="ad-icons">
           <a class="ad-ibtn" href="#settings" title="Settings" aria-label="Settings">${ICON.gear}</a>
@@ -1562,6 +1637,9 @@ function accDashboard({ orders, card, banner, tabs, tab, view }) {
 }
 function bindDashboard() {
   $$("[data-logout]").forEach((b) => b.addEventListener("click", async () => { await fetch("/api/auth/logout", { method: "POST" }); location.href = "index.html"; }));
+  $$("[data-copycode]").forEach((b) => b.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copycode); toast("User code copied"); } catch { /* clipboard blocked: the code is on screen */ }
+  }));
   $$("[data-go]").forEach((b) => b.addEventListener("click", () => $("#" + b.dataset.go).scrollIntoView({ behavior: "smooth", block: "start" })));
 }
 
@@ -1641,6 +1719,7 @@ async function initApplicantAccount() {
       <div class="card acc-form">
         <h3>Account</h3>
         <div class="sum-row"><span>${acctLabel(USER.username)}</span><b class="acct-id">${esc(USER.username)}</b></div>
+        <div class="sum-row"><span>User code</span><b class="acct-id">${esc(USER.code || "—")}</b></div>
         <div class="sum-row"><span>Account type</span><span class="status s-pending">${member() ? "Buyer" : "Member"}</span></div>
         <div class="sum-row"><span>Member since</span><span>${fmtDate(USER.createdAt)}</span></div>
         <button class="btn btn-outline btn-block" id="acc-logout">Log out</button>
@@ -1780,7 +1859,8 @@ async function initAccount() {
         <div class="card acc-form">
           <h3>Account</h3>
           <div class="sum-row"><span>${acctLabel(USER.username)}</span><b class="acct-id">${esc(USER.username)}</b></div>
-          <div class="sum-row"><span>Account type</span><span class="status s-delivered">Reseller</span></div>
+          <div class="sum-row"><span>User code</span><b class="acct-id">${esc(USER.code || "—")}</b></div>
+        <div class="sum-row"><span>Account type</span><span class="status s-delivered">Reseller</span></div>
           <div class="sum-row"><span>Member since</span><span>${fmtDate(USER.createdAt)}</span></div>
           <button class="btn btn-outline btn-block" id="acc-logout">Log out</button>
         </div>

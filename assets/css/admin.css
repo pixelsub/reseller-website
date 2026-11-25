@@ -235,5 +235,27 @@
 .admin-body tbody tr:hover td { background: #f8fafd; }
 .order-search { border-radius: 99px; box-shadow: var(--shadow); }
 .order-search .btn { border-radius: 99px; }
+.order-search .btn[hidden] { display: none; }
 .modal { border-radius: 18px; }
+
+/* Add / deduct balance dialog */
+.bal-now { color: var(--ink); font-size: 15px; }
+.bal-mode { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--bg-soft); border: 1px solid var(--line); border-radius: 99px; }
+.bal-mode label { cursor: pointer; }
+.bal-mode input { position: absolute; opacity: 0; pointer-events: none; }
+.bal-mode span { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; border-radius: 99px; font-weight: 600; font-size: 14px; color: var(--muted); transition: .15s; }
+.bal-mode span svg { width: 15px; height: 15px; }
+.bal-mode input:checked + span { background: linear-gradient(110deg, #1d4ed8, #3b82f6); color: #fff; box-shadow: 0 4px 12px rgba(37, 99, 235, .3); }
+.bal-mode label:last-child input:checked + span { background: linear-gradient(110deg, #b91c1c, #ef4444); box-shadow: 0 4px 12px rgba(220, 38, 38, .3); }
+.bal-mode input:focus-visible + span { outline: 2px solid var(--primary); outline-offset: 2px; }
+.bal-field { display: grid; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.bal-field input { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font: inherit; font-size: 15px; font-weight: 400; outline: none; }
+.bal-field input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-100); }
+.bal-chips .tab { padding: 5px 11px; font-size: 12.5px; }
+.bal-after { min-height: 20px; color: var(--muted); }
+.bal-after b { color: var(--ink); }
+.modal-actions .btn:disabled { opacity: .5; cursor: not-allowed; }
+.ud-adj { display: inline-flex; align-items: center; gap: 3px; margin: 4px 0 0; padding: 0; justify-self: start; font-size: 12.5px; }
+.ud-adj svg { width: 13px; height: 13px; }
+td.tu-actions [data-adj] svg { width: 15px; height: 15px; }
 @media (max-width: 860px) { .admin-card { display: none; } }

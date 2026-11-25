@@ -98,12 +98,15 @@ h1, h2, h3, h4 { color: var(--ink); line-height: 1.2; letter-spacing: -.02em; }
 
 /* Hero */
 .hero { padding: 36px 0 28px; }
-.hero-slider { position: relative; border-radius: var(--radius-lg); overflow: hidden; min-height: 380px; }
+/* All slides share one grid cell: the card is as tall as the tallest slide, and every slide fills it
+   (no empty strip under a shorter slide, no height jump between slides) */
+.hero-slider { position: relative; display: grid; border-radius: var(--radius-lg); overflow: hidden; min-height: 380px; isolation: isolate; }
 .hero-slide {
-  position: absolute; inset: 0; display: grid; grid-template-columns: 1.1fr .9fr; align-items: center;
-  padding: 48px 56px; color: #fff; opacity: 0; visibility: hidden; transition: opacity .6s;
+  grid-area: 1 / 1; position: relative; display: grid; grid-template-columns: 1.1fr .9fr; align-items: center; min-width: 0;
+  padding: 48px 56px; color: #fff; opacity: 0; visibility: hidden; transition: opacity .6s, visibility .6s;
 }
-.hero-slide.active { opacity: 1; visibility: visible; position: relative; }
+.hero-slide.active { opacity: 1; visibility: visible; z-index: 1; }
+.hero-controls { z-index: 2; }
 .hero-slide.s1 { background: radial-gradient(circle at 80% 30%, #60a5fa 0, transparent 45%), linear-gradient(120deg, #1e3a8a, #2563eb 60%, #3b82f6); }
 .hero-slide.s2 { background: radial-gradient(circle at 85% 70%, #34d399 0, transparent 40%), linear-gradient(120deg, #0f172a, #1e40af 70%); }
 .hero-slide.s3 { background: radial-gradient(circle at 75% 25%, #f472b6 0, transparent 40%), linear-gradient(120deg, #312e81, #6d28d9 60%, #2563eb); }
@@ -750,6 +753,15 @@ tr:last-child td { border-bottom: 0; }
   display: grid; place-items: center; box-shadow: 0 10px 24px rgba(37,211,102,.4); z-index: 40;
 }
 .wa-float svg { width: 28px; height: 28px; }
+
+/* User code pill (profile + admin) */
+.ucode {
+  display: inline-flex; align-items: center; gap: 4px; font: 700 11.5px/1 ui-monospace, Consolas, monospace; letter-spacing: .04em;
+  color: var(--primary); background: var(--primary-50); border: 1px solid var(--primary-100); border-radius: 6px; padding: 3px 7px; vertical-align: 1px;
+}
+button.ucode { cursor: pointer; margin-right: 4px; }
+button.ucode:hover { border-color: var(--primary); }
+.ucode svg { width: 12px; height: 12px; }
 
 /* Phone bottom menu */
 .tabbar { display: none; }

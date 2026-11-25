@@ -677,8 +677,22 @@ function endSessionsOf(username) {
 }
 // 10 characters, no look-alikes (0/o, 1/l/i) so it's easy to type from a chat message
 const tempPassword = () => { const a = "abcdefghjkmnpqrstuvwxyz23456789"; return Array.from(crypto.randomBytes(10), (x) => a[x % a.length]).join(""); };
+// Every account gets a short unique code (e.g. U-482913) the customer can tell the admin, who can search by it
+function newUserCode(users) {
+  const used = new Set(users.map((u) => u.code));
+  let code;
+  do code = "U-" + crypto.randomInt(100_000, 1_000_000); while (used.has(code));
+  return code;
+}
+// Accounts made before codes existed get one at startup (once; saved to users.json)
+function backfillUserCodes() {
+  const users = readJson(usersFile, []);
+  let n = 0;
+  for (const u of users) if (!u.code) { u.code = newUserCode(users); n++; }
+  if (n) { writeJson(usersFile, users); console.log(`Gave ${n} account(s) a user code.`); }
+}
 const publicUser = (u) => ({
-  username: u.username, status: userStatus(u), reseller: isReseller(u), balance: u.balance || 0, createdAt: u.createdAt,
+  username: u.username, code: u.code || "", status: userStatus(u), reseller: isReseller(u), balance: u.balance || 0, createdAt: u.createdAt,
   tempPassword: !!u.tempPassword,
   application: u.application ? { type: u.application.type, link: u.application.link, note: u.application.note || "", contact: u.application.contact || "",
     submittedAt: u.application.submittedAt, rejectNote: u.rejectNote || "" } : null,
@@ -775,7 +789,7 @@ async function signup(req, res) {
   const applying = body.type !== undefined || body.link !== undefined;
   const app = applying ? parseApplication(body, users, null) : {};
   if (app.error) return send(res, 400, { error: app.error });
-  const u = { username, ...hashPassword(password), createdAt: new Date().toISOString(),
+  const u = { username, code: newUserCode(users), ...hashPassword(password), createdAt: new Date().toISOString(),
     ...(applying ? { status: "pending", application: app.application } : { status: "member" }) };
   users.push(u);
   writeJson(usersFile, users);
@@ -1955,7 +1969,7 @@ function serveStatic(req, res, url) {
   });
 }
 
-http.createServer(async (req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
   try {
     if (url.pathname.startsWith("/api/")) await api(req, res, url);
@@ -1963,7 +1977,9 @@ http.createServer(async (req, res) => {
   } catch (e) {
     send(res, 400, { error: e.message || "Bad request" });
   }
-}).listen(port, () => {
+});
+backfillUserCodes();
+server.listen(port, () => {
   console.log(`PixelSub running at http://localhost:${port}`);
   console.log(`Data folder: ${storeDir}`);
   if (dataAtRisk) console.error("WARNING: running on Railway WITHOUT a Volume - all orders, stock and product edits are lost on every deploy. Add a Volume and set DATA_DIR to its mount path.");
