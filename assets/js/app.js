@@ -230,6 +230,10 @@ const ICON = {
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   logout: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>',
   chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6"/></svg>',
+  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>',
+  grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>',
+  receipt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>',
+  user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>',
   api: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m8 8-5 4 5 4M16 8l5 4-5 4M14 5l-4 14"/></svg>',
 };
 
@@ -321,6 +325,33 @@ function renderFooter() {
       <span>© ${new Date().getFullYear()} ${SITE.domain}. All rights reserved.</span>
       <span class="pay-mini">${SITE.payments.map((p) => `<span>${esc(p)}</span>`).join("")}</span>
     </div>`;
+  renderTabbar();
+}
+
+// Phone-only bottom menu: Home · Products · Orders · Account
+function renderTabbar() {
+  const page = document.body.dataset.page;
+  if (page === "landing" || $(".tabbar")) return; // landing has its own sticky button
+  const hash = location.hash;
+  const tabs = [
+    ["home", "Home", "index.html", ICON.home, page === "home" && hash !== "#products"],
+    ["products", "Products", page === "home" ? "#products" : "index.html#products", ICON.grid, (page === "home" && hash === "#products") || page === "product"],
+    ["orders", "Orders", USER ? "account.html#orders" : "order.html", ICON.receipt, page === "order" || (page === "account" && hash === "#orders")],
+    ["account", USER ? "My account" : "Login", USER ? "account.html" : "login.html", ICON.user, (page === "account" && hash !== "#orders") || page === "login"],
+  ];
+  const nav = document.createElement("nav");
+  nav.className = "tabbar";
+  nav.setAttribute("aria-label", "Main menu");
+  nav.innerHTML = tabs.map(([k, l, href, ic, on]) => `<a href="${href}" data-tab="${k}" class="${on ? "on" : ""}"${on ? ' aria-current="page"' : ""}><span>${ic}</span>${l}</a>`).join("");
+  document.body.appendChild(nav);
+  document.body.classList.add("has-tabbar");
+  // Same-page hash links (#products, #orders) don't reload, so move the highlight by hand
+  const mark = () => {
+    const h = location.hash, want = page === "home" ? (h === "#products" ? "products" : "home")
+      : page === "account" ? (h === "#orders" ? "orders" : "account") : null;
+    if (want) $$("a", nav).forEach((a) => a.classList.toggle("on", a.dataset.tab === want));
+  };
+  window.addEventListener("hashchange", mark);
 }
 
 function toast(msg) {
