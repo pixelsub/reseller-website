@@ -440,7 +440,10 @@ const priceHtml = (n) => `<span class="cur">${SITE.currency}</span>${fmt2(n)}`;
 function productCard(p) {
   const stock = totalStock(p);
   const firstBulk = p.variants.find(hasBulk);
-  const v = firstBulk || p.variants[0];
+  // Card price = the cheapest package (among those in stock; all of them when everything is sold out)
+  const pool = p.variants.filter((x) => x.stock > 0);
+  const v = (pool.length ? pool : p.variants).reduce((a, b) => (b.price < a.price ? b : a));
+  const from = new Set(p.variants.map((x) => x.price)).size > 1; // several prices -> "From $x"
   const media = p.image
     ? `<img src="${esc(p.image)}" alt="${esc(p.name)}" loading="lazy">`
     : `<span class="pc-logo" style="--c:${p.color}">${esc(p.icon)}</span>`;
@@ -460,8 +463,8 @@ function productCard(p) {
           ${stock === 0 ? '<span class="pc-out">Out of stock</span>' : `<span class="pc-left">${stock} left</span>`}
         </div>
         <div class="pc-price">
-          <strong>${priceHtml(v.price)}</strong>
-          ${firstBulk ? `<span class="pc-bulk" title="Reseller price for 2+ pcs">Reseller 2+: <b>${priceHtml(v.bulkPrice)}</b></span>` : ""}
+          <strong>${from ? '<small class="pc-from">From</small>' : ""}${priceHtml(v.price)}</strong>
+          ${hasBulk(v) ? `<span class="pc-bulk" title="Reseller price for 2+ pcs">Reseller 2+: <b>${priceHtml(v.bulkPrice)}</b></span>` : ""}
         </div>
       </div>
     </a>`;

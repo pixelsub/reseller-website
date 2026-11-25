@@ -234,6 +234,7 @@ h1, h2, h3, h4 { color: var(--ink); line-height: 1.2; letter-spacing: -.02em; }
 .pc-meta span:first-child:empty + .pc-left { margin-right: auto; }
 .pc-price { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .pc-price strong { font-size: 17px; font-weight: 700; color: var(--ink); }
+.pc-from { font-size: 11.5px; font-weight: 600; color: var(--muted); margin-right: 4px; }
 .cur { font-size: .7em; font-weight: 600; color: var(--muted); margin-right: 2px; vertical-align: .25em; }
 .pc-bulk { font-size: 11.5px; color: var(--green); background: var(--green-50); padding: 3px 8px; border-radius: 99px; }
 .pc-bulk b { font-weight: 700; }
